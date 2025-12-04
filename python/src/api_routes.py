@@ -1,11 +1,13 @@
 import json
 import math
+import hashlib
 from typing import List, Optional
 from collections import defaultdict
 import asyncio
 import datetime
 import io
 import calendar
+from uuid import uuid4
 
 from fastapi import APIRouter, Request, HTTPException, status, Query
 from fastapi.responses import StreamingResponse, JSONResponse, Response
@@ -98,6 +100,16 @@ class TransactionUpdateRequest(BaseModel):
         validate_by_name = True
 
 
+class PreorderCreateRequest(BaseModel):
+    employee_id: str = Field(min_length=1, alias="employeeId")
+    token: str = Field(min_length=4, alias="token")
+    tenant_id: int = Field(alias="tenantId")
+    menu_label: str = Field(min_length=1, alias="menuLabel")
+
+    class Config:
+        validate_by_name = True
+
+
 @router.post("/transaction", status_code=status.HTTP_201_CREATED)
 def create_transaction(transaction_data: TransactionCreateRequest):
     conn = get_db_connection()
@@ -166,6 +178,164 @@ def create_transaction(transaction_data: TransactionCreateRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to log transaction: {e}",
+        )
+    finally:
+        conn.close()
+
+
+@router.post("/preorder", status_code=status.HTTP_201_CREATED)
+def create_preorder(preorder: PreorderCreateRequest):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT employee_id, card_number, name, is_disabled, is_blocked, order_token_hash
+            FROM employees
+            WHERE employee_id = ?
+            """,
+            (preorder.employee_id,),
+        )
+        employee = cursor.fetchone()
+        if (
+            not employee
+            or employee["is_disabled"]
+            or employee["is_blocked"]
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Pegawai tidak dapat melakukan pre-order.",
+            )
+
+        token_hash = hashlib.sha256(preorder.token.encode("utf-8")).hexdigest()
+        stored_token_hash = employee["order_token_hash"]
+        if not stored_token_hash or stored_token_hash != token_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Token tidak valid"
+            )
+
+        cursor.execute(
+            "SELECT id, name, quota, is_limited FROM tenants WHERE id = ?",
+            (preorder.tenant_id,),
+        )
+        tenant = cursor.fetchone()
+        if not tenant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tenant dengan ID '{preorder.tenant_id}' tidak ditemukan.",
+            )
+
+        today = datetime.date.today().isoformat()
+
+        cursor.execute(
+            """
+            SELECT 1 FROM preorders
+            WHERE employee_id = ?
+              AND tenant_id = ?
+              AND order_date = ?
+              AND status IN ('PENDING','TAKEN')
+            LIMIT 1
+            """,
+            (preorder.employee_id, preorder.tenant_id, today),
+        )
+        if cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Pre-order sudah dibuat untuk tenant ini hari ini.",
+            )
+
+        queue_number: Optional[int] = None
+        remaining_quota: Optional[int] = None
+        tenant_quota = tenant["quota"]
+        is_limited = bool(tenant["is_limited"])
+        if is_limited:
+            if tenant_quota is None or tenant_quota <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Kuota pre-order untuk menu ini sudah habis.",
+                )
+            cursor.execute(
+                """
+                UPDATE tenants
+                SET quota = quota - 1
+                WHERE id = ? AND quota > 0
+                """,
+                (tenant["id"],),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Kuota pre-order untuk menu ini sudah habis.",
+                )
+            cursor.execute(
+                "SELECT quota FROM tenants WHERE id = ?", (tenant["id"],)
+            )
+            updated_quota_row = cursor.fetchone()
+            remaining_quota = updated_quota_row["quota"]
+            queue_number = remaining_quota + 1
+        else:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM preorders
+                WHERE tenant_id = ?
+                  AND order_date = ?
+                  AND status IN ('PENDING','TAKEN')
+                """,
+                (preorder.tenant_id, today),
+            )
+            queue_number = cursor.fetchone()[0] + 1
+
+        order_code = uuid4().hex
+        cursor.execute(
+            """
+            INSERT INTO preorders (
+                order_code,
+                employee_id,
+                card_number,
+                employee_name,
+                tenant_id,
+                tenant_name,
+                menu_label,
+                order_date,
+                status,
+                queue_number
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+            """,
+            (
+                order_code,
+                preorder.employee_id,
+                employee["card_number"],
+                employee["name"],
+                tenant["id"],
+                tenant["name"],
+                preorder.menu_label,
+                today,
+                queue_number,
+            ),
+        )
+        conn.commit()
+
+        return JSONResponse(
+            content={
+                "orderCode": order_code,
+                "employeeId": preorder.employee_id,
+                "employeeName": employee["name"],
+                "tenantId": tenant["id"],
+                "tenantName": tenant["name"],
+                "menuLabel": preorder.menu_label,
+                "orderDate": today,
+                "queueNumber": queue_number,
+                "remainingQuota": remaining_quota,
+            }
+        )
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Gagal membuat pre-order: {e}",
         )
     finally:
         conn.close()
