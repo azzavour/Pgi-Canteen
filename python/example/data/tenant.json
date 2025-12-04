@@ -1,0 +1,29 @@
+{
+  "1": {
+    "name": "Bu Yanti",
+    "quota": 50,
+    "menu": [
+      "Paket A: Nasi + Ayam + Waaa",
+      "Paket B: Nasi + Sapi + Udang",
+      "Paket C: Nasi + Ikan + Kacang"
+    ]
+  },
+  "2": {
+    "name": "Bu Rima",
+    "quota": 50,
+    "menu": [
+      "Paket A: Nasi + Daging + Wortel",
+      "Paket B: Nasi + Telur + Bayam",
+      "Paket C: Nasi + Ubi + Jagung"
+    ]
+  },
+  "3": {
+    "name": "Bakso Kumis",
+    "quota": 50,
+    "menu": [
+      "Paket A: Bakso Komplit",
+      "Paket B: Bakso + Nasi",
+      "Paket C: Bakso + Indomie"
+    ]
+  }
+}

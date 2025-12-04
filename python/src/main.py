@@ -1,0 +1,183 @@
+import threading
+import datetime
+import requests
+import os
+from dotenv import load_dotenv
+
+from .inputs import create_input_window_and_loop
+from .sound_manager import SoundManager
+from . import app_state
+
+load_dotenv()
+
+# --- Configuration ---
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+DEBOUNCE_SECONDS = float(os.getenv("DEBOUNCE_SECONDS", 0.2))
+
+# --- Global State for this process ---
+sound_manager = SoundManager(asset_dir="assets")
+input_buffers = {}
+debounce_timers = {}
+buffer_lock = threading.Lock()
+last_input_strings = {}
+
+
+def log_buffer(device_id):
+    with buffer_lock:
+        local_buffer = input_buffers.get(device_id, [])
+        input_buffers[device_id] = []
+
+    if not local_buffer:
+        return
+
+    chars = [item[1] for item in local_buffer]
+    input_string = "".join(chars).rstrip("\r")
+
+    if last_input_strings.get(device_id) == input_string:
+        print('ignoring')
+        return
+
+    last_input_strings[device_id] = input_string
+
+    def reset_last_input():
+        if last_input_strings.get(device_id) == input_string:
+            last_input_strings.pop(device_id, None)
+
+    threading.Timer(2.0, reset_last_input).start()
+
+    if not (len(input_string) == 10 and input_string.isdigit()):
+        return
+
+    found_employee = next(
+        (
+            employee
+            for employee in app_state.employee_data
+            if employee.get("card_number") == input_string
+        ),
+        None,
+    )
+
+    if not found_employee:
+        sound_manager.play_failed()
+        print(f"Card {input_string} not found")
+        return
+
+    if found_employee.get("is_disabled"):
+        sound_manager.play_failed()
+        print(
+            f"Employee {found_employee.get('name')} ({found_employee.get('employee_id')}) is disabled."
+        )
+        return
+
+    print(
+        f"[{device_id}] Employee ID: {found_employee.get('employee_id')}, Name: {found_employee.get('name')}"
+    )
+
+    try:
+        today = datetime.date.today()
+        tenant_info = app_state.device_to_tenant_map.get(device_id, {})
+
+        if not tenant_info:
+            print(
+                f"Warning: Device ID '{device_id}' not found in tenant map. Transaction not logged."
+            )
+            sound_manager.play_failed()
+            return
+
+        if tenant_info.get("is_limited"):
+            # Check for duplicate transaction via API
+            duplicate_check_response = requests.get(
+                f"{API_BASE_URL}/transaction/check_duplicate",
+                params={
+                    "cardNumber": input_string,
+                    "transactionDate": today.isoformat(),
+                },
+            )
+            duplicate_check_response.raise_for_status()
+            if duplicate_check_response.json()["exists"]:
+                print(
+                    f"[{device_id}] Duplicate input found, not logging: '{input_string}'"
+                )
+                sound_manager.play_failed()
+                return
+
+        tenant_id = tenant_info.get("id")
+        limit = tenant_info.get("quota")
+
+        print(limit)
+        # Only enforce the limit if the quota is a positive number.
+        if limit is not None and limit > 1:
+            # Get daily transaction count via API
+            daily_count_response = requests.get(
+                f"{API_BASE_URL}/transaction/daily_count",
+                params={
+                    "tenantId": tenant_id,
+                    "transactionDate": today.isoformat(),
+                },
+            )
+            daily_count_response.raise_for_status()
+            device_transactions_count = daily_count_response.json()["count"]
+
+            if device_transactions_count >= limit:
+                print(
+                    f"[{device_id}] Tenant '{tenant_info.get('name')}' has reached its daily quota of {limit}."
+                )
+                sound_manager.play_limit_reached()
+                return
+
+        tenant_name = tenant_info.get("name", "Unknown Tenant")
+        timestamp = datetime.datetime.now()
+
+        # Log transaction via API
+        transaction_payload = {
+            "cardNumber": input_string,
+            "employeeId": found_employee.get("employee_id"),
+            "employeeName": found_employee.get("name"),
+            "employeeGroup": found_employee.get("employee_group"),
+            "tenantId": tenant_id,
+            "tenantName": tenant_name,
+            "transactionDate": timestamp.isoformat(),
+        }
+        transaction_response = requests.post(
+            f"{API_BASE_URL}/transaction", json=transaction_payload
+        )
+        transaction_response.raise_for_status()
+
+        print(
+            f"[{device_id}] Successfully logged transaction for card number: {input_string}"
+        )
+        sound_manager.play_success()
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error during transaction processing via API: {e}")
+        sound_manager.play_failed()
+    except Exception as e:
+        print(f"An unexpected error occurred during transaction processing: {e}")
+        sound_manager.play_failed()
+
+
+def handle_key_press(device_id, char):
+    if device_id in debounce_timers and debounce_timers[device_id]:
+        debounce_timers[device_id].cancel()
+
+    with buffer_lock:
+        if device_id not in input_buffers:
+            input_buffers[device_id] = []
+        input_buffers[device_id].append((device_id, char))
+    debounce_timers[device_id] = threading.Timer(
+        DEBOUNCE_SECONDS, log_buffer, args=[device_id]
+    )
+    debounce_timers[device_id].start()
+
+
+def main():
+    """Main function to run the keyboard listener and sound manager."""
+    app_state.load_all_data()
+    sound_manager.start_worker()
+
+    print("Starting raw keyboard input listener...")
+    create_input_window_and_loop(handle_key_press)
+
+
+if __name__ == "__main__":
+    main()

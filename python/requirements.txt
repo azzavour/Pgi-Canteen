@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+requests
+pydantic
+python-dotenv
+pygame
+openpyxl
