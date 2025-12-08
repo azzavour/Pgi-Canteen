@@ -54,7 +54,7 @@ def verify_portal_token(employee_id: str, portal_token: str) -> Optional[Dict[st
                 f"""
                 SELECT emp_id, name, email
                 FROM {table}
-                WHERE emp_id = ? AND portal_token = ?
+                WHERE emp_id = ? AND token = ?
                 """,
                 (employee_id, portal_token),
             )

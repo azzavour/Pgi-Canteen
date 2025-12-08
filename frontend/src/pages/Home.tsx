@@ -151,8 +151,10 @@ export default function Home() {
     let isMounted = true;
     async function authenticateFromPortal() {
       const params = new URLSearchParams(window.location.search);
-      const employeeIdParam = params.get("emp_id");
-      const portalTokenParam = params.get("token");
+      const employeeIdParam =
+        params.get("emp_id") ?? params.get("employee_id");
+      const portalTokenParam =
+        params.get("portal_token") ?? params.get("token");
 
       if (!employeeIdParam || !portalTokenParam) {
         if (isMounted) {
