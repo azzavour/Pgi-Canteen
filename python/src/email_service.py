@@ -10,7 +10,7 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME") or ""
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 SMTP_USE_AUTH = os.getenv("SMTP_USE_AUTH", "true").lower() == "true"
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USERNAME or "no-reply@pgi-canteen.local")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USERNAME or "no-reply@cawang-canteen.local")
 
 
 def _build_menu_lines(order: Dict[str, Any]) -> List[str]:
@@ -66,7 +66,7 @@ def send_order_confirmation(
     to_email: Optional[str], order: Dict[str, Any], *, recipient: str = "employee"
 ) -> None:
     """
-    Kirim email ringkasan pre-order ke karyawan sesuai desain PGI Canteen.
+    Kirim email ringkasan pre-order ke karyawan sesuai desain Cawang Canteen.
     """
     if not to_email:
         return
@@ -82,7 +82,7 @@ def send_order_confirmation(
     queue_number = order.get("queue_number")
     date_for_subject = order.get("subject_date") or order_datetime_text
 
-    subject = f"Konfirmasi Pre-Order PGI Canteen - {date_for_subject}"
+    subject = f"Konfirmasi Pre-Order Cawang Canteen - {date_for_subject}"
     greeting = f"Halo {employee_name},"
 
     queue_text = f"\nNomor Antrean: {queue_number}" if queue_number else ""
@@ -90,7 +90,7 @@ def send_order_confirmation(
     plain_text = f"""
 {greeting}
 
-Terima kasih telah melakukan pemesanan melalui PGI Canteen. Pesanan Anda telah berhasil kami terima dan tercatat di sistem.
+Terima kasih telah melakukan pemesanan melalui Cawang Canteen. Pesanan Anda telah berhasil kami terima dan tercatat di sistem.
 
 Ketersediaan menu akan dikonfirmasi langsung oleh tenant terkait pada saat proses konfirmasi pesanan. Jika menu tidak tersedia, Anda dapat memilih menu lain dari tenant yang sama.
 
@@ -131,7 +131,7 @@ Harap tunjukkan tiket ini saat pengambilan pesanan dan foto bukti order untuk di
     <div style="max-width:520px;margin:0 auto;">
       <p style="font-size:14px; margin:0 0 12px 0;">{greeting}</p>
       <p style="font-size:13px; margin:0 0 10px 0;">
-        Terima kasih telah melakukan pemesanan melalui PGI Canteen. Pesanan Anda telah berhasil kami terima dan tercatat di sistem.
+        Terima kasih telah melakukan pemesanan melalui Cawang Canteen. Pesanan Anda telah berhasil kami terima dan tercatat di sistem.
       </p>
       <p style="font-size:13px; margin:0 0 10px 0;">
         Ketersediaan menu akan dikonfirmasi langsung oleh tenant terkait pada saat proses konfirmasi pesanan. Jika menu tidak tersedia, Anda dapat memilih menu lain dari tenant yang sama.
@@ -146,10 +146,6 @@ Harap tunjukkan tiket ini saat pengambilan pesanan dan foto bukti order untuk di
         <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
           <tr>
             <td width="55%" style="text-align:center;border-right:2px solid #000;padding:8px;">
-              <div style="font-weight:bold;font-size:16px;margin-bottom:8px;">SCAN KONFIRMASI ORDER</div>
-              {qr_section}
-            </td>
-            <td width="45%" style="text-align:center;padding:8px;">
               <div style="font-weight:bold;font-size:20px;text-transform:uppercase;margin-bottom:6px;">
                 {employee_name.upper()}
               </div>
@@ -161,6 +157,10 @@ Harap tunjukkan tiket ini saat pengambilan pesanan dan foto bukti order untuk di
                 {menu_label}
               </div>
               <div style="font-size:12px;">{tenant_name}</div>
+            </td>
+            <td width="45%" style="text-align:center;padding:8px;">
+              <div style="font-weight:bold;font-size:16px;margin-bottom:8px;">SCAN KONFIRMASI ORDER</div>
+              {qr_section}
             </td>
           </tr>
         </table>

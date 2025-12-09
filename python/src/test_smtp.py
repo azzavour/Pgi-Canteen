@@ -17,7 +17,7 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME") or ""
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 SMTP_USE_AUTH = os.getenv("SMTP_USE_AUTH", "true").lower() == "true"
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USERNAME or "no-reply@pgi-canteen.local")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USERNAME or "no-reply@cawang-canteen.local")
 
 TO_EMAIL = "izzynisa.26@gmail.com"
 
@@ -28,7 +28,7 @@ print("SMTP_USE_TLS:", SMTP_USE_TLS)
 print("SMTP_USE_AUTH:", SMTP_USE_AUTH)
 
 msg = EmailMessage()
-msg["Subject"] = "Tes SMTP dari PGI Canteen"
+msg["Subject"] = "Tes SMTP dari Cawang Canteen"
 msg["From"] = SMTP_FROM
 msg["To"] = TO_EMAIL
 msg.set_content("Kalau email ini masuk, konfigurasi SMTP sudah benar.")

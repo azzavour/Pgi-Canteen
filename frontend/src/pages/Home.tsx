@@ -655,8 +655,25 @@ export default function Home() {
             </div>
             <div className="mx-6 mt-2 border border-gray-700">
               <div className="grid md:grid-cols-2">
-                <div className="flex flex-col items-center border-b border-gray-700 px-6 py-6 md:border-b-0 md:border-r">
-                  <p className="mb-4 text-sm font-semibold tracking-wide">
+                <div className="flex flex-col items-center justify-center border-b border-gray-700 px-6 py-6 text-center md:border-b-0 md:border-r">
+                  <div className="text-lg font-semibold uppercase">
+                    {orderResult.employeeName}
+                  </div>
+                  <div className="text-sm text-gray-700">
+                    {orderResult.employeeId}
+                  </div>
+                  <div className="mt-4 text-7xl font-black leading-none">
+                    {orderResult.queueNumber}
+                  </div>
+                  <div className="mt-4 text-sm font-semibold uppercase">
+                    {orderResult.menuLabel}
+                  </div>
+                  <div className="text-xs text-gray-700">
+                    {orderResult.tenantName}
+                  </div>
+                </div>
+                <div className="flex flex-col items-center px-6 py-6">
+                  <p className="mb-4 text-sm font-semibold tracking-wide text-center">
                     SCAN KONFIRMASI ORDER
                   </p>
                   {(() => {
@@ -692,23 +709,6 @@ export default function Home() {
                       </div>
                     );
                   })()}
-                </div>
-                <div className="flex flex-col items-center justify-center px-6 py-6 text-center">
-                  <div className="text-lg font-semibold uppercase">
-                    {orderResult.employeeName}
-                  </div>
-                  <div className="text-sm text-gray-700">
-                    {orderResult.employeeId}
-                  </div>
-                  <div className="mt-4 text-7xl font-black leading-none">
-                    {orderResult.queueNumber}
-                  </div>
-                  <div className="mt-4 text-sm font-semibold uppercase">
-                    {orderResult.menuLabel}
-                  </div>
-                  <div className="text-xs text-gray-700">
-                    {orderResult.tenantName}
-                  </div>
                 </div>
               </div>
             </div>

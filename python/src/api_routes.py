@@ -416,7 +416,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
 def send_employee_tokens():
     raise HTTPException(
         status_code=status.HTTP_410_GONE,
-        detail="DEPRECATED: Token email tidak lagi digunakan dalam alur PGI Canteen.",
+        detail="DEPRECATED: Token email tidak lagi digunakan dalam alur Cawang Canteen.",
     )
 
 
