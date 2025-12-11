@@ -61,7 +61,7 @@ def get_canteen_status(now: datetime.datetime) -> dict:
     - After 11:00   -> closed, reason 'after_close'.
     """
     open_time = datetime.time(8, 0)
-    close_time = datetime.time(11, 0)
+    close_time = datetime.time(17, 0)
     current_time = now.time()
 
     status_payload = {

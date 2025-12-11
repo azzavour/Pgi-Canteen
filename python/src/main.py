@@ -2,11 +2,15 @@ import threading
 import datetime
 import requests
 import os
+import time
+import json
 from dotenv import load_dotenv
 
 from .inputs import create_input_window_and_loop
 from .sound_manager import SoundManager
 from . import app_state
+
+load_dotenv()
 
 # --- Configuration ---
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -19,6 +23,7 @@ input_buffers = {}
 debounce_timers = {}
 buffer_lock = threading.Lock()
 last_input_strings = {}
+_sse_thread_started = False
 
 
 def log_buffer(device_id):
@@ -187,6 +192,42 @@ def main():
     """Main function to run the keyboard listener and sound manager."""
     app_state.load_all_data()
     sound_manager.start_worker()
+
+    def sse_listener():
+        url = f"{API_BASE_URL}/sse"
+        while True:
+            try:
+                with requests.get(url, stream=True, timeout=90) as response:
+                    response.raise_for_status()
+                    event_lines = []
+                    for raw_line in response.iter_lines(decode_unicode=True):
+                        if raw_line is None:
+                            continue
+                        line = raw_line.strip()
+                        if not line:
+                            if event_lines:
+                                payload = "\n".join(event_lines)
+                                event_lines = []
+                                if payload.startswith("data:"):
+                                    try:
+                                        json_payload = payload.replace("data:", "", 1).strip()
+                                        json.loads(json_payload)
+                                        print("[SSE LISTENER] update diterima, refresh data tenant.")
+                                        app_state.load_all_data()
+                                    except json.JSONDecodeError:
+                                        print("[SSE LISTENER] gagal parsing payload SSE.")
+                            continue
+                        if line.startswith(":"):
+                            continue
+                        event_lines.append(line)
+            except Exception as exc:
+                print(f"[SSE LISTENER] koneksi terputus: {exc}. Reconnect 5 detik.")
+                time.sleep(5)
+
+    global _sse_thread_started
+    if not _sse_thread_started:
+        threading.Thread(target=sse_listener, daemon=True).start()
+        _sse_thread_started = True
 
     print("Starting raw keyboard input listener...")
     create_input_window_and_loop(handle_key_press)
