@@ -23,10 +23,57 @@ def seed_dummy_data():
             print(f"[{datetime.datetime.now().isoformat()}] Cleared table '{table}'.")
 
         token_hash = hashlib.sha256("1234".encode("utf-8")).hexdigest()
+        employees = [
+            (
+                "34283",
+                "CARD34283",
+                "ISMAIL BIN MAIL",
+                "Karyawan",
+                0,
+                0,
+                0,
+                token_hash,
+                "ismail@example.com",
+            ),
+            (
+                "90001",
+                "CARD90001",
+                "Ariffin",
+                "Karyawan",
+                0,
+                0,
+                0,
+                token_hash,
+                "dummy@example.com",
+            ),
+            (
+                "98765",
+                "CARD568348437",
+                "Aruffin",
+                "Karyawan",
+                0,
+                0,
+                0,
+                token_hash,
+                "dummy@example.com",
+            ),
+             (
+                "53432",
+                "CARD459345934",
+                "Fizi",
+                "Karyawan",
+                0,
+                0,
+                0,
+                token_hash,
+                "dummy@example.com",
+            ),
+        ]
         cursor.executemany(
             """
             INSERT INTO employees (
                 employee_id,
+                card_number,
                 name,
                 employee_group,
                 admin,
@@ -34,36 +81,15 @@ def seed_dummy_data():
                 is_blocked,
                 order_token_hash,
                 email
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [
-                (
-                    "34283",
-                    "ismail bin mail",
-                    "PGI",
-                    0,
-                    0,
-                    0,
-                    token_hash,
-                    "ismail@example.com",
-                ),
-                (
-                    "12345",
-                    "Annisa",
-                    "PGI",
-                    0,
-                    0,
-                    0,
-                    token_hash,
-                    "annisa@example.com",
-                ),
-            ],
+            employees,
         )
         print("Inserted employee dummy data.")
 
         tenants = [
-            (1, "Bu Yanti", 50, 1),
-            (2, "Bu Rima", 50, 1),
+            (1, "Bu Yanti", 1, 1),
+            (2, "Bu Rima", 1, 1),
         ]
         cursor.executemany(
             """

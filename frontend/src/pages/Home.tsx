@@ -135,8 +135,9 @@ export default function Home() {
             } else if (quota > 0 && used > (quota * 2) / 3) {
               color = "text-yellow-500";
             }
-            const displayAvailable =
-              quota > 0 ? Math.max(quota - used, 0) : rawAvailable;
+
+            const available =
+              typeof quotaValue === "number" ? quota - used : rawAvailable;
 
             return {
               deviceCode: device.device_code,
@@ -144,7 +145,7 @@ export default function Home() {
               tenantName: device.tenant.name,
               quota: quotaValue ?? 0,
               menu: device.tenant.menu,
-              available: displayAvailable,
+              available: available,
               used: used,
               lastOrder: device.lastOrder ?? null,
               color: color,
@@ -377,10 +378,7 @@ export default function Home() {
               } else if (newUsed > (vendor.quota * 2) / 3) {
                 newColor = "text-yellow-500";
               }
-              const newAvailable =
-                vendor.quota > 0
-                  ? Math.max(vendor.quota - newUsed, 0)
-                  : vendor.available;
+              const newAvailable = vendor.quota - newUsed;
 
               return {
                 ...vendor,
@@ -525,13 +523,7 @@ export default function Home() {
                   <div className="text-center text-xl text-gray-700">
                     Available:
                     <div className="text-7xl font-black text-slate-800 my-3">
-                      {(() => {
-                        const safeAvailable = Number(vendor.available);
-                        const numericValue = Number.isFinite(safeAvailable)
-                          ? safeAvailable
-                          : 0;
-                        return numericValue.toLocaleString("id-ID");
-                      })()}
+                      {Number(vendor.quota - vendor.used).toLocaleString("id-ID")}
                     </div>
                     <div className="text-lg text-gray-600">
                       Ordered:{" "}

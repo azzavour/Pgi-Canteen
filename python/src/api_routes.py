@@ -30,7 +30,10 @@ def generate_ticket_number(
     order_datetime: datetime.datetime, queue_number: int
 ) -> str:
     date_part = order_datetime.strftime("%y%m%d")
-    queue_part = f"{queue_number:03d}"
+    if queue_number >= 0:
+        queue_part = f"{queue_number:03d}"
+    else:
+        queue_part = str(queue_number)
     return f"{date_part}-{queue_part}"
 
 
@@ -360,14 +363,53 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
         order_count_today = cursor.fetchone()[0] + 1
 
         quota_value = tenant["quota"] or 0
+
         if quota_value > 0:
-            queue_number = max(quota_value - order_count_today + 1, 0)
+            remaining_before_new_order = quota_value - (order_count_today - 1)
+            if remaining_before_new_order <= 0:
+                cursor.execute(
+                    """
+                    SELECT t.id,
+                           t.quota,
+                           COALESCE(p.order_count, 0) AS order_count
+                    FROM tenants t
+                    LEFT JOIN (
+                        SELECT tenant_id, COUNT(*) AS order_count
+                        FROM preorders
+                        WHERE order_date = ?
+                        GROUP BY tenant_id
+                    ) p ON p.tenant_id = t.id
+                    WHERE t.quota IS NOT NULL AND t.quota > 0
+                    """,
+                    (today,),
+                )
+                tenants_with_quota = cursor.fetchall()
+                any_tenant_with_remaining = False
+                for tenant_row in tenants_with_quota:
+                    tenant_quota = tenant_row["quota"] or 0
+                    orders_taken = tenant_row["order_count"] or 0
+                    if tenant_quota - orders_taken > 0:
+                        any_tenant_with_remaining = True
+                        break
+
+                if any_tenant_with_remaining:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Kuota tenant ini sudah habis. Silakan pilih tenant lain yang masih tersedia.",
+                    )
+        remaining_after = quota_value - order_count_today
+
+        if quota_value > 0:
+            if remaining_after >= 0:
+                queue_number = remaining_after + 1
+            else:
+                queue_number = remaining_after
         else:
-            queue_number = order_count_today
+            queue_number = remaining_after
 
         remaining_quota: Optional[int] = None
         if quota_value > 0:
-            remaining_quota = max(quota_value - order_count_today, 0)
+            remaining_quota = remaining_after
 
         order_code = uuid4().hex
         order_datetime = datetime.datetime.now()
@@ -908,7 +950,7 @@ def get_dashboard_overview():
                 }
 
             quota_value = int(row["quota"] or 0)
-            available = quota_value
+            available = quota_value - ordered
 
             device_info = {
                 "device_code": row["device_code"],

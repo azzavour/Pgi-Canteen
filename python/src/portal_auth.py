@@ -15,6 +15,9 @@ load_dotenv()
 # Token dummy untuk testing jika DB Portal mati total
 DUMMY_PORTAL_TOKENS: Set[Tuple[str, str]] = {
     ("34283", "TEST123"),
+    ("90001", "12345"),
+    ("98765", "ABCDE"),
+    ("53432", "XYZ987"),
 }
 
 
