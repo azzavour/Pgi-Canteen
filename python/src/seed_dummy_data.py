@@ -26,7 +26,7 @@ def seed_dummy_data():
         employees = [
             (
                 "34283",
-                "CARD34283",
+                "0003871263",
                 "ISMAIL BIN MAIL",
                 "Karyawan",
                 0,

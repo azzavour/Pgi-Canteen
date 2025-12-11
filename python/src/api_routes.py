@@ -21,6 +21,7 @@ from . import sse_manager
 from .sqlite_database import get_db_connection
 from .email_service import send_order_confirmation
 from .portal_auth import verify_portal_token
+from .quota_utils import evaluate_tenant_quota_for_today
 from update_employee_email import update_employee_email
 
 router = APIRouter()
@@ -210,6 +211,28 @@ def canteen_status():
     return JSONResponse(content=status_payload)
 
 
+@router.get("/tenant/{tenant_id}/quota-state", status_code=status.HTTP_200_OK)
+def get_tenant_quota_state(tenant_id: int):
+    conn = get_db_connection()
+    try:
+        quota_state = evaluate_tenant_quota_for_today(conn, tenant_id)
+        return JSONResponse(content=quota_state)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Gagal menghitung kuota tenant: {exc}",
+        )
+    finally:
+        conn.close()
+
+
 @router.post("/transaction", status_code=status.HTTP_201_CREATED)
 def create_transaction(transaction_data: TransactionCreateRequest):
     conn = get_db_connection()
@@ -333,6 +356,20 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Tenant dengan ID '{preorder.tenant_id}' tidak ditemukan.",
+            )
+
+        try:
+            quota_state = evaluate_tenant_quota_for_today(conn, tenant["id"])
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            )
+
+        if not quota_state["can_order_for_target"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Kuota tenant ini sudah habis sementara tenant lain masih memiliki sisa.",
             )
 
         today = date.today().isoformat()

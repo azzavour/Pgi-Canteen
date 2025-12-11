@@ -85,7 +85,6 @@ def log_buffer(device_id):
             return
 
         if tenant_info.get("is_limited"):
-            # Check for duplicate transaction via API
             duplicate_check_response = requests.get(
                 f"{API_BASE_URL}/transaction/check_duplicate",
                 params={
@@ -102,28 +101,34 @@ def log_buffer(device_id):
                 return
 
         tenant_id = tenant_info.get("id")
-        limit = tenant_info.get("quota")
 
-        print(limit)
-        # Only enforce the limit if the quota is a positive number.
-        if limit is not None and limit > 1:
-            # Get daily transaction count via API
-            daily_count_response = requests.get(
-                f"{API_BASE_URL}/transaction/daily_count",
-                params={
-                    "tenantId": tenant_id,
-                    "transactionDate": today.isoformat(),
-                },
+        try:
+            quota_response = requests.get(
+                f"{API_BASE_URL}/tenant/{tenant_id}/quota-state"
             )
-            daily_count_response.raise_for_status()
-            device_transactions_count = daily_count_response.json()["count"]
+            quota_response.raise_for_status()
+            quota_state = quota_response.json()
+        except requests.exceptions.RequestException as quota_error:
+            print(f"[{device_id}] Gagal mengecek kuota tenant: {quota_error}")
+            sound_manager.play_failed()
+            return
 
-            if device_transactions_count >= limit:
-                print(
-                    f"[{device_id}] Tenant '{tenant_info.get('name')}' has reached its daily quota of {limit}."
-                )
-                sound_manager.play_limit_reached()
-                return
+        if not quota_state.get("can_order_for_target", True):
+            print(
+                f"[DEVICE TAP BLOCKED] tenant={tenant_info.get('name')} "
+                f"employee={found_employee.get('employee_id')} "
+                f"remaining={quota_state.get('remaining_for_target')} "
+                f"max_remaining={quota_state.get('max_remaining_any')}"
+            )
+            sound_manager.play_limit_reached()
+            return
+
+        if quota_state.get("is_free_mode"):
+            print(
+                f"[DEVICE TAP FREE MODE] tenant={tenant_info.get('name')} "
+                f"remaining={quota_state.get('remaining_for_target')} "
+                f"max_remaining={quota_state.get('max_remaining_any')}"
+            )
 
         tenant_name = tenant_info.get("name", "Unknown Tenant")
         timestamp = datetime.datetime.now()
