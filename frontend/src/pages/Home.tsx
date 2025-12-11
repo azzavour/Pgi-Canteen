@@ -8,6 +8,14 @@ import {
 } from "../components/ui/card";
 import { cn } from "../lib/utils";
 
+type CanteenStatus = {
+  is_open: boolean;
+  reason: string;
+  message: string;
+  open_time: string;
+  close_time: string;
+};
+
 interface VendorLastOrder {
   queueNumber: number;
   menuLabel: string;
@@ -63,6 +71,9 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showTicket, setShowTicket] = useState(false);
   const [orderDateTimeText, setOrderDateTimeText] = useState("");
+  const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
+  const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
     setSelectedMenuLabel("");
@@ -202,6 +213,55 @@ export default function Home() {
     authenticateFromPortal();
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const baseUrl = import.meta.env.VITE_API_URL;
+    const normalizedBaseUrl =
+      typeof baseUrl === "string" ? baseUrl.replace(/\/$/, "") : "";
+    const statusEndpoint = normalizedBaseUrl
+      ? `${normalizedBaseUrl}/canteen/status`
+      : "/canteen/status";
+
+    async function fetchCanteenStatus(showLoading = true) {
+      try {
+        if (showLoading) {
+          setIsStatusLoading(true);
+        }
+        setStatusError(null);
+        const res = await fetch(statusEndpoint);
+        if (!res.ok) {
+          throw new Error(`Failed to load canteen status: ${res.status}`);
+        }
+        const data: CanteenStatus = await res.json();
+        if (isMounted) {
+          setCanteenStatus(data);
+        }
+      } catch (err) {
+        console.error("Error fetching canteen status:", err);
+        if (isMounted) {
+          setStatusError(
+            "Gagal memuat status Cawang Canteen. Silakan refresh halaman."
+          );
+          setCanteenStatus(null);
+        }
+      } finally {
+        if (isMounted && showLoading) {
+          setIsStatusLoading(false);
+        }
+      }
+    }
+
+    fetchCanteenStatus(true);
+    const intervalId = window.setInterval(() => {
+      fetchCanteenStatus(false);
+    }, 60_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -383,6 +443,51 @@ export default function Home() {
 
   if (!currentUser) {
     return null;
+  }
+
+  if (isStatusLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 px-6 canteen-status">
+        <div className="max-w-md rounded-3xl bg-white p-6 text-center shadow-md">
+          <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+            Cawang Canteen
+          </h2>
+          <p className="text-sm text-gray-600">
+            Memuat status Cawang Canteen...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (statusError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 px-6 canteen-status error">
+        <div className="max-w-md rounded-3xl bg-white p-6 text-center shadow-md border border-red-100">
+          <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+            Cawang Canteen Tutup
+          </h2>
+          <p className="text-sm text-gray-600">{statusError}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (canteenStatus && !canteenStatus.is_open) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 px-6 canteen-status closed">
+        <div className="max-w-lg rounded-3xl bg-white p-6 text-center shadow-md">
+          <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+            Cawang Canteen Tutup
+          </h2>
+          <p className="text-sm text-gray-700 mb-2">{canteenStatus.message}</p>
+          <p className="text-sm text-gray-600">
+            Jam layanan pemesanan Pre-Order: {canteenStatus.open_time}–
+            {canteenStatus.close_time} WIB
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

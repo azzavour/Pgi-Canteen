@@ -46,6 +46,51 @@ def get_whatsapp_number_for_tenant(tenant_name: str) -> Optional[str]:
     return None
 
 
+def get_canteen_status(now: datetime.datetime) -> dict:
+    """
+    Determine whether the canteen is open or closed based on time only.
+
+    Rules:
+    - Ordering window: 08:00–11:00 WIB every day.
+    - Before 08:00  -> closed, reason 'before_open'.
+    - 08:00–11:00   -> open, reason 'open'.
+    - After 11:00   -> closed, reason 'after_close'.
+    """
+    open_time = datetime.time(8, 0)
+    close_time = datetime.time(11, 0)
+    current_time = now.time()
+
+    status_payload = {
+        "is_open": False,
+        "reason": "",
+        "message": "",
+        "open_time": "08:00",
+        "close_time": "11:00",
+    }
+
+    if current_time < open_time:
+        status_payload["is_open"] = False
+        status_payload["reason"] = "before_open"
+        status_payload["message"] = (
+            "Akan dibuka pada pukul 08.00 WIB, "
+            "silakan kembali lagi pada waktu tersebut."
+        )
+    elif current_time >= close_time:
+        status_payload["is_open"] = False
+        status_payload["reason"] = "after_close"
+        status_payload["message"] = (
+            "Silakan pesan makan langsung di kantin (on the spot)."
+        )
+    else:
+        status_payload["is_open"] = True
+        status_payload["reason"] = "open"
+        status_payload["message"] = (
+            "Cawang Canteen buka. Jam layanan pemesanan: 08.00–11.00 WIB."
+        )
+
+    return status_payload
+
+
 class EmployeeCreateRequest(BaseModel):
     card_number: str = Field(min_length=1, alias="cardNumber")
     employee_id: str = Field(min_length=1, alias="employeeId")
@@ -155,6 +200,13 @@ def portal_login(request: PortalLoginRequest):
     }
 
 
+@router.get("/canteen/status", status_code=status.HTTP_200_OK)
+def canteen_status():
+    now = datetime.datetime.now()
+    status_payload = get_canteen_status(now)
+    return JSONResponse(content=status_payload)
+
+
 @router.post("/transaction", status_code=status.HTTP_201_CREATED)
 def create_transaction(transaction_data: TransactionCreateRequest):
     conn = get_db_connection()
@@ -230,6 +282,13 @@ def create_transaction(transaction_data: TransactionCreateRequest):
 
 @router.post("/preorder", status_code=status.HTTP_201_CREATED)
 def create_preorder(preorder: PreorderCreateRequest, background_tasks: BackgroundTasks):
+    canteen_status = get_canteen_status(datetime.datetime.now())
+    if not canteen_status["is_open"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=canteen_status["message"],
+        )
+
     conn = get_db_connection()
     cursor = conn.cursor()
     try:

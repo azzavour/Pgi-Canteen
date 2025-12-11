@@ -66,8 +66,8 @@ def _verify_token_in_portal_db(employee_id: str, portal_token: str) -> bool:
         cursor = portal_conn.cursor()
         query = f"SELECT 1 FROM {table} WHERE emp_id = ? AND token = ?"
         
-        # Hanya print 10 karakter awal token agar log tidak terlalu penuh
-        token_preview = portal_token[:10] + "..." if len(portal_token) > 10 else portal_token
+        # Hanya print 20 karakter awal token agar log tidak terlalu penuh
+        token_preview = portal_token[:20] + "..." if len(portal_token) > 10 else portal_token
         print(f"[DEBUG PORTAL] Menjalankan Query: SELECT 1 FROM {table} WHERE emp_id={employee_id} AND token={token_preview}")
         
         cursor.execute(query, (employee_id, portal_token))
