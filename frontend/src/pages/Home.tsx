@@ -8,6 +8,16 @@ import {
 } from "../components/ui/card";
 import { cn } from "../lib/utils";
 
+const DAY_NAMES = [
+  "Senin",
+  "Selasa",
+  "Rabu",
+  "Kamis",
+  "Jumat",
+  "Sabtu",
+  "Minggu",
+];
+
 type CanteenStatus = {
   is_open: boolean;
   reason: string;
@@ -55,59 +65,6 @@ function getWhatsAppNumberForTenant(tenantName: string): string | null {
   return null;
 }
 
-export default function Home() {
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [time, setTime] = useState(new Date().toLocaleTimeString());
-  const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
-  const [selectedMenuLabel, setSelectedMenuLabel] = useState<string>("");
-  const [isPreorderOpen, setIsPreorderOpen] = useState(false);
-  const [currentUser, setCurrentUser] = useState<{
-    employee_id: string;
-    name?: string;
-    email?: string;
-  } | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
-const [preorderError, setPreorderError] = useState<string | null>(null);
-const [isSubmitting, setIsSubmitting] = useState(false);
-const [showTicket, setShowTicket] = useState(false);
-const [orderDateTimeText, setOrderDateTimeText] = useState("");
-  const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
-const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
-const [statusError, setStatusError] = useState<string | null>(null);
-const queueNumberFormatted =
-  orderResult && orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
-    ? String(orderResult.queueNumber).padStart(3, "0")
-    : orderResult?.orderCode ?? "";
-const ticketDisplayCode =
-  orderResult && queueNumberFormatted
-    ? orderResult.tenantVerificationCode
-      ? `${orderResult.tenantVerificationCode}-${queueNumberFormatted}`
-      : queueNumberFormatted
-    : "";
-const whatsappMessage =
-  orderResult && (ticketDisplayCode || orderResult.orderCode)
-    ? (() => {
-        const { dayLine, timeLine } = formatDayTime(
-          orderDateTimeText || orderResult.orderDate
-        );
-        const prefix = getTenantPrefix(orderResult.tenantName);
-        const queueCode =
-          orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
-            ? `${prefix}${orderResult.queueNumber}`
-            : "-";
-        const combinedCode = ticketDisplayCode || orderResult.orderCode;
-        return (
-          `#${combinedCode}\n\n` +
-          `Halo Bu, saya ${orderResult.employeeName} (${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} dengan detail pesanan :\n\n` +
-          `Hari/tanggal : ${dayLine || "-"}\n` +
-          `Waktu : ${timeLine || "-"}\n` +
-          `Nomor pesanan : ${queueCode}`
-        );
-      })()
-    : "";
-
 function getTenantPrefix(tenantName: string): string {
   const lowerName = tenantName.toLowerCase();
   if (lowerName.includes("yanti")) {
@@ -118,16 +75,6 @@ function getTenantPrefix(tenantName: string): string {
   }
   return "";
 }
-
-const DAY_NAMES = [
-  "Senin",
-  "Selasa",
-  "Rabu",
-  "Kamis",
-  "Jumat",
-  "Sabtu",
-  "Minggu",
-];
 
 function formatDayTime(raw: string | null | undefined) {
   if (!raw) {
@@ -186,6 +133,60 @@ function formatDayTime(raw: string | null | undefined) {
 
   return { dayLine: dayLabel, timeLine: timeText };
 }
+
+export default function Home() {
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [time, setTime] = useState(new Date().toLocaleTimeString());
+  const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
+  const [selectedMenuLabel, setSelectedMenuLabel] = useState<string>("");
+  const [isPreorderOpen, setIsPreorderOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{
+    employee_id: string;
+    name?: string;
+    email?: string;
+  } | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
+const [preorderError, setPreorderError] = useState<string | null>(null);
+const [isSubmitting, setIsSubmitting] = useState(false);
+const [showTicket, setShowTicket] = useState(false);
+const [orderDateTimeText, setOrderDateTimeText] = useState("");
+  const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
+const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
+const [statusError, setStatusError] = useState<string | null>(null);
+const queueNumberFormatted =
+  orderResult && orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
+    ? String(orderResult.queueNumber).padStart(3, "0")
+    : orderResult?.orderCode ?? "";
+const ticketDisplayCode =
+  orderResult && queueNumberFormatted
+    ? orderResult.tenantVerificationCode
+      ? `${orderResult.tenantVerificationCode}-${queueNumberFormatted}`
+      : queueNumberFormatted
+    : "";
+const whatsappMessage =
+  orderResult && (ticketDisplayCode || orderResult.orderCode)
+    ? (() => {
+        const { dayLine, timeLine } = formatDayTime(
+          orderDateTimeText || orderResult.orderDate
+        );
+        const prefix = getTenantPrefix(orderResult.tenantName);
+        const queueCode =
+          orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
+            ? `${prefix}${orderResult.queueNumber}`
+            : "-";
+        const combinedCode = ticketDisplayCode || orderResult.orderCode;
+        return (
+          `#${combinedCode}\n\n` +
+          `Halo Bu, saya ${orderResult.employeeName} (${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} dengan detail pesanan :\n\n` +
+          `Hari/tanggal : ${dayLine || "-"}\n` +
+          `Waktu : ${timeLine || "-"}\n` +
+          `Nomor pesanan : ${queueCode}`
+        );
+      })()
+    : "";
+
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
     setSelectedMenuLabel("");

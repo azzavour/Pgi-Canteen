@@ -86,6 +86,30 @@ def _get_day_and_date_from_order_date(order_date: Optional[str]) -> tuple[str, s
     return day_name, date_label
 
 
+def _get_whatsapp_day_time(order_date: Optional[str]) -> tuple[str, str]:
+    if not order_date:
+        return "", ""
+    normalized = order_date.strip()
+    if normalized.endswith(("Z", "z")):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        dt = datetime.datetime.fromisoformat(normalized)
+    except ValueError:
+        return "", ""
+    weekday_names = [
+        "Senin",
+        "Selasa",
+        "Rabu",
+        "Kamis",
+        "Jumat",
+        "Sabtu",
+        "Minggu",
+    ]
+    day_label = f"{weekday_names[dt.weekday()]}, {dt.strftime('%d/%m/%Y')}"
+    time_label = dt.strftime("%H.%M")
+    return day_label, time_label
+
+
 def _build_whatsapp_url(order: Dict[str, Any], employee_name: str, employee_id: str) -> Optional[str]:
     existing = order.get("whatsapp_url")
     if existing:
@@ -95,7 +119,6 @@ def _build_whatsapp_url(order: Dict[str, Any], employee_name: str, employee_id: 
     if not wa_number:
         return None
     menu_label = order.get("menu_label") or order.get("menu") or ""
-    order_datetime_text = order.get("order_datetime_text") or ""
     order_date_value = order.get("order_date") or ""
     ticket_number = order.get("ticket_number") or order.get("order_code") or ""
     queue_number = order.get("queue_number")
@@ -115,14 +138,11 @@ def _build_whatsapp_url(order: Dict[str, Any], employee_name: str, employee_id: 
         if queue_number is not None and tenant_prefix
         else (str(queue_number) if queue_number is not None else "-")
     )
-    day_label, time_label = _get_day_and_date(order_datetime_text)
-    if (not day_label or not time_label) and order_date_value:
-        fallback_day, fallback_date = _get_day_and_date_from_order_date(order_date_value)
-        day_label = day_label or fallback_day
-        time_label = time_label or fallback_date
+    day_label, time_label = _get_whatsapp_day_time(order_date_value)
+    employee_identity = f" ({employee_id})" if employee_id else ""
     message = (
         f"#{display_ticket}\n\n"
-        f"Halo Bu, saya {employee_name} (ID: {employee_id}) sudah memesan {menu_label} di {tenant_name} dengan detail pesanan :\n\n"
+        f"Halo Bu, saya {employee_name}{employee_identity} sudah memesan {menu_label} di {tenant_name} dengan detail pesanan :\n\n"
         f"Hari/tanggal : {day_label or '-'}\n"
         f"Waktu : {time_label or '-'}\n"
         f"Nomor pesanan : {queue_code}"
