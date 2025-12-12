@@ -33,6 +33,7 @@ interface Vendor {
   used: number;
   lastOrder: VendorLastOrder | null;
   color: string;
+  verificationCode?: string;
 }
 
 interface OrderResult {
@@ -45,6 +46,7 @@ interface OrderResult {
   menuLabel: string;
   orderDate: string;
   queueNumber: number;
+  tenantVerificationCode?: string;
 }
 
 function getWhatsAppNumberForTenant(tenantName: string): string | null {
@@ -66,14 +68,124 @@ export default function Home() {
   } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
-  const [preorderError, setPreorderError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showTicket, setShowTicket] = useState(false);
-  const [orderDateTimeText, setOrderDateTimeText] = useState("");
+const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
+const [preorderError, setPreorderError] = useState<string | null>(null);
+const [isSubmitting, setIsSubmitting] = useState(false);
+const [showTicket, setShowTicket] = useState(false);
+const [orderDateTimeText, setOrderDateTimeText] = useState("");
   const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
-  const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
-  const [statusError, setStatusError] = useState<string | null>(null);
+const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
+const [statusError, setStatusError] = useState<string | null>(null);
+const queueNumberFormatted =
+  orderResult && orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
+    ? String(orderResult.queueNumber).padStart(3, "0")
+    : orderResult?.orderCode ?? "";
+const ticketDisplayCode =
+  orderResult && queueNumberFormatted
+    ? orderResult.tenantVerificationCode
+      ? `${orderResult.tenantVerificationCode}-${queueNumberFormatted}`
+      : queueNumberFormatted
+    : "";
+const whatsappMessage =
+  orderResult && (ticketDisplayCode || orderResult.orderCode)
+    ? (() => {
+        const { dayLine, timeLine } = formatDayTime(
+          orderDateTimeText || orderResult.orderDate
+        );
+        const prefix = getTenantPrefix(orderResult.tenantName);
+        const queueCode =
+          orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
+            ? `${prefix}${orderResult.queueNumber}`
+            : "-";
+        const combinedCode = ticketDisplayCode || orderResult.orderCode;
+        return (
+          `#${combinedCode}\n\n` +
+          `Halo Bu, saya ${orderResult.employeeName} (${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} dengan detail pesanan :\n\n` +
+          `Hari/tanggal : ${dayLine || "-"}\n` +
+          `Waktu : ${timeLine || "-"}\n` +
+          `Nomor pesanan : ${queueCode}`
+        );
+      })()
+    : "";
+
+function getTenantPrefix(tenantName: string): string {
+  const lowerName = tenantName.toLowerCase();
+  if (lowerName.includes("yanti")) {
+    return "A";
+  }
+  if (lowerName.includes("rima")) {
+    return "B";
+  }
+  return "";
+}
+
+const DAY_NAMES = [
+  "Senin",
+  "Selasa",
+  "Rabu",
+  "Kamis",
+  "Jumat",
+  "Sabtu",
+  "Minggu",
+];
+
+function formatDayTime(raw: string | null | undefined) {
+  if (!raw) {
+    return { dayLine: "", timeLine: "" };
+  }
+  const text = raw.trim();
+  if (!text) {
+    return { dayLine: "", timeLine: "" };
+  }
+
+  const lowerText = text.toLowerCase();
+  const matchedDay = DAY_NAMES.find((name) =>
+    lowerText.startsWith(name.toLowerCase())
+  );
+
+  let dayLabel = "";
+  let remainder = text;
+  if (matchedDay) {
+    dayLabel = matchedDay;
+    remainder = remainder.slice(matchedDay.length).trim();
+    if (remainder.startsWith(",")) {
+      remainder = remainder.slice(1).trim();
+    }
+  }
+
+  const dateRegex = /(\d{1,2}\/\d{1,2}\/\d{4})/;
+  const timeRegex = /(\d{1,2}[:.]\d{2})/;
+  const dateMatch = remainder.match(dateRegex);
+  const timeMatch = remainder.match(timeRegex);
+  const dateText = dateMatch ? dateMatch[1] : "";
+  const timeText = timeMatch ? timeMatch[1].replace(":", ".") : "";
+
+  if (!dayLabel && dateText) {
+    // Text was something like "12/12/2025, 08.00"
+    const isoCandidate = dateText.split("/").reverse().join("-");
+    const localizedDate = new Date(isoCandidate);
+    if (!Number.isNaN(localizedDate.getTime())) {
+      const localized = localizedDate.toLocaleDateString("id-ID", {
+        weekday: "long",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      });
+      const [weekdayName, datePortion] = localized
+        .split(",")
+        .map((s) => s.trim());
+      dayLabel = `${weekdayName}, ${datePortion}`;
+    } else {
+      dayLabel = dateText;
+    }
+  } else if (dayLabel && dateText) {
+    dayLabel = `${dayLabel}, ${dateText}`;
+  } else if (!dayLabel) {
+    dayLabel = text;
+  }
+
+  return { dayLine: dayLabel, timeLine: timeText };
+}
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
     setSelectedMenuLabel("");
@@ -110,6 +222,7 @@ export default function Home() {
           available?: number;
           ordered?: number;
           lastOrder?: VendorLastOrder | null;
+          tenantVerificationCode?: string;
           tenant: {
             id: number;
             name: string;
@@ -118,6 +231,7 @@ export default function Home() {
             available?: number;
             ordered?: number;
             lastOrder?: VendorLastOrder | null;
+            verificationCode?: string;
           };
         }[] = await overviewResponse.json();
 
@@ -149,6 +263,10 @@ export default function Home() {
               used: used,
               lastOrder: device.lastOrder ?? null,
               color: color,
+              verificationCode:
+                device.tenant?.verificationCode ??
+                device.tenantVerificationCode ??
+                "",
             };
           })
         );
@@ -315,6 +433,7 @@ export default function Home() {
         employeeName: data.employeeName,
         tenantId: data.tenantId,
         tenantName: data.tenantName,
+        tenantVerificationCode: data.tenantVerificationCode,
         menuLabel: data.menuLabel,
         orderDate: data.orderDate,
         queueNumber: data.queueNumber,
@@ -523,7 +642,16 @@ export default function Home() {
                   <div className="text-center text-xl text-gray-700">
                     Available:
                     <div className="text-7xl font-black text-slate-800 my-3">
-                      {Number(vendor.quota - vendor.used).toLocaleString("id-ID")}
+                      <div className="flex items-center justify-center gap-4">
+                        {getTenantPrefix(vendor.tenantName) && (
+                          <span className="text-7xl font-black text-slate-800">
+                            {getTenantPrefix(vendor.tenantName)}
+                          </span>
+                        )}
+                        <span>
+                          {Number(vendor.quota - vendor.used).toLocaleString("id-ID")}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-lg text-gray-600">
                       Ordered:{" "}
@@ -673,7 +801,7 @@ export default function Home() {
                       <p>
                         <span className="font-medium">Kode Pesanan:</span>{" "}
                         <span className="font-mono">
-                          {orderResult.orderCode}
+                          {ticketDisplayCode || orderResult.orderCode}
                         </span>
                       </p>
                       <p>
@@ -692,6 +820,12 @@ export default function Home() {
                         <span className="font-medium">Tanggal:</span>{" "}
                         {orderResult.orderDate}
                       </p>
+                      <p>
+                        <span className="font-medium">Kode Tenant:</span>{" "}
+                        <span className="font-mono">
+                          {orderResult.tenantVerificationCode || "-"}
+                        </span>
+                      </p>
                     </div>
 
                     {(() => {
@@ -699,9 +833,9 @@ export default function Home() {
                         orderResult.tenantName
                       );
                       if (!waNumber) return null;
-
-                      const message = `Halo Bu, saya ${orderResult.employeeName} (ID: ${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} pada ${orderResult.orderDate}. Kode pesanan: ${orderResult.orderCode}.`;
-                      const encodedMessage = encodeURIComponent(message);
+                      const encodedMessage = encodeURIComponent(
+                        whatsappMessage || ""
+                      );
                       const waLink = `https://api.whatsapp.com/send?phone=${waNumber}&text=${encodedMessage}`;
                       const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
                         waLink
@@ -745,23 +879,26 @@ export default function Home() {
               <span>
                 ORDER :{" "}
                 <span className="font-mono tracking-wide">
-                  {orderResult.orderCode}
+                  {ticketDisplayCode || orderResult.orderCode}
                 </span>
               </span>
               <span>{orderDateTimeText || orderResult.orderDate}</span>
             </div>
             <div className="mx-6 mt-2 border border-gray-700">
               <div className="grid md:grid-cols-2">
-                <div className="flex flex-col items-center justify-center border-b border-gray-700 px-6 py-6 text-center md:border-b-0 md:border-r">
-                  <div className="text-lg font-semibold uppercase">
-                    {orderResult.employeeName}
-                  </div>
+                      <div className="flex flex-col items-center justify-center border-b border-gray-700 px-6 py-6 text-center md:border-b-0 md:border-r">
+                        <div className="text-lg font-semibold uppercase">
+                          {orderResult.employeeName}
+                        </div>
                   <div className="text-sm text-gray-700">
                     {orderResult.employeeId}
                   </div>
-                  <div className="mt-4 text-7xl font-black leading-none">
-                    {orderResult.queueNumber}
-                  </div>
+                      <div className="mt-4 text-7xl font-black leading-none flex items-center justify-center gap-4">
+                        {getTenantPrefix(orderResult.tenantName) && (
+                          <span>{getTenantPrefix(orderResult.tenantName)}</span>
+                        )}
+                        <span>{orderResult.queueNumber}</span>
+                      </div>
                   <div className="mt-4 text-sm font-semibold uppercase">
                     {orderResult.menuLabel}
                   </div>
@@ -784,8 +921,9 @@ export default function Home() {
                         </div>
                       );
                     }
-                    const message = `Halo Bu, saya ${orderResult.employeeName} (ID: ${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} pada ${orderResult.orderDate}. Kode pesanan: ${orderResult.orderCode}. Nomor pesanan: ${orderResult.queueNumber}.`;
-                    const encodedMessage = encodeURIComponent(message);
+                    const encodedMessage = encodeURIComponent(
+                      whatsappMessage || ""
+                    );
                     const waLink = `https://api.whatsapp.com/send?phone=${waNumber}&text=${encodedMessage}`;
                     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(
                       waLink
@@ -809,9 +947,6 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            <p className="mx-6 mt-3 text-center text-xs font-semibold">
-              Foto Bukti order ini untuk dilampirkan saat melakukan konfirmasi
-            </p>
             <div className="mt-4 mb-6 flex justify-center">
               <button
                 type="button"

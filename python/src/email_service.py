@@ -1,3 +1,4 @@
+import datetime
 import os
 import smtplib
 from email.message import EmailMessage
@@ -42,6 +43,49 @@ def _get_whatsapp_number_for_tenant(tenant_name: str) -> Optional[str]:
     return None
 
 
+def _get_tenant_prefix(tenant_name: str) -> str:
+    name = (tenant_name or "").lower()
+    if "yanti" in name:
+        return "A"
+    if "rima" in name:
+        return "B"
+    return ""
+
+
+def _get_day_and_date(order_datetime_text: Optional[str]) -> tuple[str, str]:
+    if not order_datetime_text:
+        return "", ""
+    primary = order_datetime_text.split(",", 1)[0].strip()
+    parts = primary.split(" ", 1)
+    day_name = parts[0]
+    date_part = parts[1].strip() if len(parts) > 1 else ""
+    return day_name, date_part
+
+
+def _get_day_and_date_from_order_date(order_date: Optional[str]) -> tuple[str, str]:
+    if not order_date:
+        return "", ""
+    try:
+        dt = datetime.datetime.fromisoformat(order_date)
+    except ValueError:
+        try:
+            dt = datetime.datetime.strptime(order_date, "%d/%m/%Y")
+        except ValueError:
+            return "", ""
+    weekday_names = [
+        "Senin",
+        "Selasa",
+        "Rabu",
+        "Kamis",
+        "Jumat",
+        "Sabtu",
+        "Minggu",
+    ]
+    day_name = weekday_names[dt.weekday()]
+    date_label = dt.strftime("%d/%m/%Y")
+    return day_name, date_label
+
+
 def _build_whatsapp_url(order: Dict[str, Any], employee_name: str, employee_id: str) -> Optional[str]:
     existing = order.get("whatsapp_url")
     if existing:
@@ -51,13 +95,37 @@ def _build_whatsapp_url(order: Dict[str, Any], employee_name: str, employee_id: 
     if not wa_number:
         return None
     menu_label = order.get("menu_label") or order.get("menu") or ""
-    order_datetime_text = order.get("order_datetime_text") or order.get("order_date") or ""
+    order_datetime_text = order.get("order_datetime_text") or ""
+    order_date_value = order.get("order_date") or ""
     ticket_number = order.get("ticket_number") or order.get("order_code") or ""
     queue_number = order.get("queue_number")
-    queue_text = f" Nomor pesanan: {queue_number}." if queue_number else ""
+    verification_code = (
+        order.get("tenant_verification_code")
+        or order.get("tenantVerificationCode")
+        or ""
+    )
+    tenant_prefix = _get_tenant_prefix(tenant_name)
+    display_ticket = (
+        f"{verification_code}-{ticket_number}"
+        if verification_code and ticket_number
+        else ticket_number
+    )
+    queue_code = (
+        f"{tenant_prefix}{queue_number}"
+        if queue_number is not None and tenant_prefix
+        else (str(queue_number) if queue_number is not None else "-")
+    )
+    day_label, time_label = _get_day_and_date(order_datetime_text)
+    if (not day_label or not time_label) and order_date_value:
+        fallback_day, fallback_date = _get_day_and_date_from_order_date(order_date_value)
+        day_label = day_label or fallback_day
+        time_label = time_label or fallback_date
     message = (
-        f"Halo Bu, saya {employee_name} (ID: {employee_id}) sudah memesan {menu_label} "
-        f"di {tenant_name} pada {order_datetime_text}. Kode pesanan: {ticket_number}.{queue_text}"
+        f"#{display_ticket}\n\n"
+        f"Halo Bu, saya {employee_name} (ID: {employee_id}) sudah memesan {menu_label} di {tenant_name} dengan detail pesanan :\n\n"
+        f"Hari/tanggal : {day_label or '-'}\n"
+        f"Waktu : {time_label or '-'}\n"
+        f"Nomor pesanan : {queue_code}"
     )
     return f"https://api.whatsapp.com/send?phone={wa_number}&text={quote_plus(message)}"
 
@@ -81,11 +149,23 @@ def send_order_confirmation(
     menu_lines = "\n".join(menu_entries)
     queue_number = order.get("queue_number")
     date_for_subject = order.get("subject_date") or order_datetime_text
+    tenant_verification_code = (
+        order.get("tenant_verification_code")
+        or order.get("tenantVerificationCode")
+        or ""
+    )
+    tenant_prefix = _get_tenant_prefix(tenant_name)
+    ticket_display_code = (
+        f"{tenant_verification_code}-{ticket_number}"
+        if tenant_verification_code and ticket_number
+        else ticket_number
+    )
 
     subject = f"Konfirmasi Pre-Order Cawang Canteen - {date_for_subject}"
     greeting = f"Halo {employee_name},"
 
     queue_text = f"\nNomor Antrean: {queue_number}" if queue_number else ""
+    day_name, date_part = _get_day_and_date(order_datetime_text)
 
     plain_text = f"""
 {greeting}
@@ -96,14 +176,17 @@ Ketersediaan menu akan dikonfirmasi langsung oleh tenant terkait pada saat prose
 
 Terima kasih atas pengertian dan kerja sama Anda.
 
-ORDER : {ticket_number} {order_datetime_text}
+ORDER : {ticket_display_code} {order_datetime_text}
 
 Nama        : {employee_name} ({employee_id})
 Tenant      : {tenant_name}
 Menu        : {menu_label}
-Nomor antre : {queue_number or "-"}
+Hari/tanggal : {day_name or "-"}
+Waktu        : {date_part or "-"}
+Nomor antre  : {((tenant_prefix + " ") if tenant_prefix else "") + (str(queue_number) if queue_number else "-")}
+Kode tenant : {tenant_verification_code or "-"}
 
-Harap tunjukkan tiket ini saat pengambilan pesanan dan foto bukti order untuk dilampirkan saat konfirmasi.
+Kirim kode ini ({ticket_display_code or tenant_verification_code or "-"}) saat konfirmasi WhatsApp setelah memindai QR.
 """.strip()
 
     whatsapp_url = _build_whatsapp_url(order, employee_name, employee_id)
@@ -140,7 +223,7 @@ Harap tunjukkan tiket ini saat pengambilan pesanan dan foto bukti order untuk di
         Terima kasih atas pengertian dan kerja sama Anda.
       </p>
       <div style="font-size:14px;font-weight:bold;margin-bottom:16px;">
-        ORDER : <span style="font-family:monospace;">{ticket_number}</span> {order_datetime_text}
+        ORDER : <span style="font-family:monospace;">{ticket_display_code}</span> {order_datetime_text}
       </div>
       <div style="border:2px solid #000;padding:14px;">
         <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
@@ -150,13 +233,19 @@ Harap tunjukkan tiket ini saat pengambilan pesanan dan foto bukti order untuk di
                 {employee_name.upper()}
               </div>
               <div style="font-size:13px;margin-bottom:12px;">{employee_id}</div>
-              <div style="font-weight:bold;font-size:56px;margin-bottom:12px;">
-                {queue_number or "-"}
+              <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:12px;">
+                {"<span style='font-weight:bold;font-size:48px;'>{}</span>".format(tenant_prefix) if tenant_prefix else ""}
+                <span style="font-weight:bold;font-size:56px;">
+                  {queue_number or "-"}
+                </span>
               </div>
               <div style="font-weight:bold;font-size:13px;text-transform:uppercase;margin-bottom:4px;">
                 {menu_label}
               </div>
               <div style="font-size:12px;">{tenant_name}</div>
+              <div style="font-size:12px;margin-top:8px;">
+                Kode Tenant: <strong>{tenant_verification_code or "-"}</strong>
+              </div>
             </td>
             <td width="45%" style="text-align:center;padding:8px;">
               <div style="font-weight:bold;font-size:16px;margin-bottom:8px;">SCAN KONFIRMASI ORDER</div>
@@ -164,10 +253,15 @@ Harap tunjukkan tiket ini saat pengambilan pesanan dan foto bukti order untuk di
             </td>
           </tr>
         </table>
+        <div style="font-size:11px;margin-top:12px;text-align:left;">
+          # {ticket_display_code}<br/><br/>
+          Halo Bu, saya {employee_name} (ID: {employee_id})<br/><br/>
+          sudah memesan {menu_label} di {tenant_name} dengan detail pesanan :<br/><br/>
+          Hari/tanggal : {day_name or "-"}<br/>
+          Waktu : {date_part or "-"}<br/>
+          Nomor pesanan : {(tenant_prefix or "") + (str(queue_number) if queue_number is not None else "-")}
+        </div>
       </div>
-      <p style="text-align:center; font-size:12px; margin-top:18px;">
-        Foto bukti order ini untuk dilampirkan saat melakukan konfirmasi.
-      </p>
     </div>
   </body>
 </html>

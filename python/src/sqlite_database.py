@@ -92,10 +92,15 @@ def create_tables(fresh: bool = False):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             quota INTEGER,
-            is_limited BOOLEAN DEFAULT 1
+            is_limited BOOLEAN DEFAULT 1,
+            verification_code TEXT
         )
     """
     )
+    cursor.execute("PRAGMA table_info(tenants)")
+    tenant_columns = [row[1] for row in cursor.fetchall()]
+    if "verification_code" not in tenant_columns:
+        cursor.execute("ALTER TABLE tenants ADD COLUMN verification_code TEXT")
 
     # Tenant Menu Table
     cursor.execute(

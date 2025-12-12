@@ -2,6 +2,7 @@ import datetime
 import hashlib
 
 from src.sqlite_database import get_db_connection
+from src.tenant_utils import generate_verification_code
 
 
 def seed_dummy_data():
@@ -88,13 +89,13 @@ def seed_dummy_data():
         print("Inserted employee dummy data.")
 
         tenants = [
-            (1, "Bu Yanti", 1, 1),
-            (2, "Bu Rima", 1, 1),
+            (1, "Bu Yanti", 3, 1, generate_verification_code()),
+            (2, "Bu Rima", 1, 1, generate_verification_code()),
         ]
         cursor.executemany(
             """
-            INSERT INTO tenants (id, name, quota, is_limited)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO tenants (id, name, quota, is_limited, verification_code)
+            VALUES (?, ?, ?, ?, ?)
             """,
             tenants,
         )

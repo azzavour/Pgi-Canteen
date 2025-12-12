@@ -22,6 +22,8 @@ from .sqlite_database import get_db_connection
 from .email_service import send_order_confirmation
 from .portal_auth import verify_portal_token
 from .quota_utils import evaluate_tenant_quota_for_today
+from .tenant_utils import generate_verification_code
+from .portal_control import read_override
 from update_employee_email import update_employee_email
 
 router = APIRouter()
@@ -30,12 +32,9 @@ router = APIRouter()
 def generate_ticket_number(
     order_datetime: datetime.datetime, queue_number: int
 ) -> str:
-    date_part = order_datetime.strftime("%y%m%d")
     if queue_number >= 0:
-        queue_part = f"{queue_number:03d}"
-    else:
-        queue_part = str(queue_number)
-    return f"{date_part}-{queue_part}"
+        return f"{queue_number:03d}"
+    return str(queue_number)
 
 
 def get_whatsapp_number_for_tenant(tenant_name: str) -> Optional[str]:
@@ -52,16 +51,28 @@ def get_whatsapp_number_for_tenant(tenant_name: str) -> Optional[str]:
 
 def get_canteen_status(now: datetime.datetime) -> dict:
     """
-    Determine whether the canteen is open or closed based on time only.
-
-    Rules:
-    - Ordering window: 08:00–11:00 WIB every day.
-    - Before 08:00  -> closed, reason 'before_open'.
-    - 08:00–11:00   -> open, reason 'open'.
-    - After 11:00   -> closed, reason 'after_close'.
+    Determine whether the canteen is open or closed.
+    Allows manual override via portal_control file.
     """
+    override = read_override()
+    if override == "open":
+        return {
+            "is_open": True,
+            "reason": "forced_open",
+            "message": "Portal dibuka manual untuk keperluan testing.",
+            "open_time": "08:00",
+            "close_time": "11:00",
+        }
+    if override == "closed":
+        return {
+            "is_open": False,
+            "reason": "forced_closed",
+            "message": "Portal ditutup manual oleh admin.",
+            "open_time": "08:00",
+            "close_time": "11:00",
+        }
     open_time = datetime.time(8, 0)
-    close_time = datetime.time(17, 0)
+    close_time = datetime.time(11, 0)
     current_time = now.time()
 
     status_payload = {
@@ -348,7 +359,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 )
 
         cursor.execute(
-            "SELECT id, name, quota, is_limited FROM tenants WHERE id = ?",
+            "SELECT id, name, quota, is_limited, verification_code FROM tenants WHERE id = ?",
             (preorder.tenant_id,),
         )
         tenant = cursor.fetchone()
@@ -413,6 +424,8 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Pesanan ini sudah tercatat. Kemungkinan Anda menekan tombol dua kali atau membuka lebih dari satu tab.",
             )
+
+        tenant_verification_code = tenant["verification_code"]
 
         cursor.execute(
             """
@@ -547,6 +560,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             "employee_id": preorder.employee_id,
             "employee_name": employee["name"],
             "tenant_name": tenant["name"],
+            "tenant_verification_code": tenant_verification_code,
             "order_datetime_text": order_datetime_text,
             "order_date": today,
             "menu_label": preorder.menu_label,
@@ -577,6 +591,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 "employeeName": employee["name"],
                 "tenantId": tenant["id"],
                 "tenantName": tenant["name"],
+                "tenantVerificationCode": tenant_verification_code,
                 "menuLabel": preorder.menu_label,
                 "orderDate": today,
                 "queueNumber": queue_number,
@@ -942,7 +957,8 @@ def get_dashboard_overview():
                 d.device_code,
                 t.id AS tenant_id,
                 t.name AS tenant_name,
-                COALESCE(t.quota, 0) AS quota
+                COALESCE(t.quota, 0) AS quota,
+                t.verification_code
             FROM
                 devices d
             JOIN
@@ -1015,6 +1031,8 @@ def get_dashboard_overview():
             quota_value = int(row["quota"] or 0)
             available = quota_value - ordered
 
+            verification_code = row["verification_code"]
+
             device_info = {
                 "device_code": row["device_code"],
                 "tenantId": tenant_id,
@@ -1022,6 +1040,7 @@ def get_dashboard_overview():
                 "available": available,
                 "ordered": ordered,
                 "lastOrder": last_order,
+                "tenantVerificationCode": verification_code,
                 "tenant": {
                     "id": tenant_id,
                     "name": row["tenant_name"],
@@ -1030,6 +1049,7 @@ def get_dashboard_overview():
                     "ordered": ordered,
                     "available": available,
                     "lastOrder": last_order,
+                    "verificationCode": verification_code,
                 },
             }
             result.append(device_info)
@@ -1136,12 +1156,14 @@ async def create_tenant(create_data: TenantCreateRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
+        verification_code = generate_verification_code()
         cursor.execute(
-            "INSERT INTO tenants (name, quota, is_limited) VALUES (?, ?, ?)",
+            "INSERT INTO tenants (name, quota, is_limited, verification_code) VALUES (?, ?, ?, ?)",
             (
                 create_data.name,
                 create_data.quota,
                 create_data.is_limited,
+                verification_code,
             ),
         )
         new_tenant_id = cursor.lastrowid
@@ -1157,7 +1179,11 @@ async def create_tenant(create_data: TenantCreateRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
-    return {"message": "Tenant created successfully", "tenantId": new_tenant_id}
+    return {
+        "message": "Tenant created successfully",
+        "tenantId": new_tenant_id,
+        "verificationCode": verification_code,
+    }
 
 
 @router.put("/tenant/{tenant_id}/update")
@@ -1166,8 +1192,20 @@ async def update_tenant(tenant_id: int, update_data: TenantUpdateRequest):
     cursor = conn.cursor()
     try:
         cursor.execute(
+            "SELECT verification_code FROM tenants WHERE id = ?",
+            (tenant_id,),
+        )
+        row = cursor.fetchone()
+        verification_code = row["verification_code"] if row else None
+
+        cursor.execute(
             "UPDATE tenants SET name = ?, quota = ?, is_limited = ? WHERE id = ?",
-            (update_data.name, update_data.quota, update_data.is_limited, tenant_id),
+            (
+                update_data.name,
+                update_data.quota,
+                update_data.is_limited,
+                tenant_id,
+            ),
         )
 
         cursor.execute("DELETE FROM tenant_menu WHERE tenant_id = ?", (tenant_id,))
@@ -1184,26 +1222,39 @@ async def update_tenant(tenant_id: int, update_data: TenantUpdateRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
-    return {"message": "Tenant updated successfully"}
+    return {
+        "message": "Tenant updated successfully",
+        "verificationCode": verification_code,
+    }
 
 
 @router.get("/tenant/{tenant_id}/detail")
 async def get_tenant(tenant_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,))
-    tenant = cursor.fetchone()
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+    try:
+        cursor.execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,))
+        tenant = cursor.fetchone()
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
 
-    tenant_dict = dict(tenant)
+        new_code = generate_verification_code()
+        cursor.execute(
+            "UPDATE tenants SET verification_code = ? WHERE id = ?",
+            (new_code, tenant_id),
+        )
 
-    cursor.execute("SELECT menu FROM tenant_menu WHERE tenant_id = ?", (tenant_id,))
-    menus = cursor.fetchall()
-    tenant_dict["menu"] = [row["menu"] for row in menus]
+        tenant_dict = dict(tenant)
+        tenant_dict["verification_code"] = new_code
 
-    conn.close()
-    return tenant_dict
+        cursor.execute("SELECT menu FROM tenant_menu WHERE tenant_id = ?", (tenant_id,))
+        menus = cursor.fetchall()
+        tenant_dict["menu"] = [row["menu"] for row in menus]
+
+        conn.commit()
+        return tenant_dict
+    finally:
+        conn.close()
 
 
 @router.delete("/tenant/{tenant_id}/delete", status_code=status.HTTP_200_OK)
