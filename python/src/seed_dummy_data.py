@@ -26,7 +26,7 @@ def seed_dummy_data():
         employees = [
             (
                 "34283",
-                "CARD34283",
+                "0003871263",
                 "ISMAIL BIN MAIL",
                 "Karyawan",
                 0,
@@ -143,8 +143,8 @@ def seed_dummy_data():
         print("Inserted tenant menu dummy data.")
 
         devices = [
-            ("1d537d2c", 1),
             ("73a0fcf", 2),
+            ("2cb6fd84", 1),
         ]
         cursor.executemany(
             """

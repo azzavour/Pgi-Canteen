@@ -2,11 +2,15 @@ import threading
 import datetime
 import requests
 import os
+import time
+import json
 from dotenv import load_dotenv
 
 from .inputs import create_input_window_and_loop
 from .sound_manager import SoundManager
 from . import app_state
+
+load_dotenv()
 
 # --- Configuration ---
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -19,6 +23,7 @@ input_buffers = {}
 debounce_timers = {}
 buffer_lock = threading.Lock()
 last_input_strings = {}
+_sse_thread_started = False
 
 
 def log_buffer(device_id):
@@ -84,8 +89,17 @@ def log_buffer(device_id):
             sound_manager.play_failed()
             return
 
-        if tenant_info.get("is_limited"):
-            # Check for duplicate transaction via API
+        tenant_id = tenant_info.get("id")
+        is_limited = bool(tenant_info.get("is_limited"))
+
+        if tenant_id is None:
+            print(
+                f"[{device_id}] Tenant ID tidak ditemukan dalam mapping. Transaksi dibatalkan."
+            )
+            sound_manager.play_failed()
+            return
+
+        if is_limited:
             duplicate_check_response = requests.get(
                 f"{API_BASE_URL}/transaction/check_duplicate",
                 params={
@@ -101,29 +115,33 @@ def log_buffer(device_id):
                 sound_manager.play_failed()
                 return
 
-        tenant_id = tenant_info.get("id")
-        limit = tenant_info.get("quota")
-
-        print(limit)
-        # Only enforce the limit if the quota is a positive number.
-        if limit is not None and limit > 1:
-            # Get daily transaction count via API
-            daily_count_response = requests.get(
-                f"{API_BASE_URL}/transaction/daily_count",
-                params={
-                    "tenantId": tenant_id,
-                    "transactionDate": today.isoformat(),
-                },
+        try:
+            quota_response = requests.get(
+                f"{API_BASE_URL}/tenant/{tenant_id}/quota-state"
             )
-            daily_count_response.raise_for_status()
-            device_transactions_count = daily_count_response.json()["count"]
+            quota_response.raise_for_status()
+            quota_state = quota_response.json()
+        except requests.exceptions.RequestException as quota_error:
+            print(f"[{device_id}] Gagal mengecek kuota tenant: {quota_error}")
+            sound_manager.play_failed()
+            return
 
-            if device_transactions_count >= limit:
-                print(
-                    f"[{device_id}] Tenant '{tenant_info.get('name')}' has reached its daily quota of {limit}."
-                )
-                sound_manager.play_limit_reached()
-                return
+        if not quota_state.get("can_order_for_target", True):
+            print(
+                f"[DEVICE TAP BLOCKED] tenant={tenant_info.get('name')} "
+                f"employee={found_employee.get('employee_id')} "
+                f"remaining={quota_state.get('remaining_for_target')} "
+                f"max_remaining={quota_state.get('max_remaining_any')}"
+            )
+            sound_manager.play_limit_reached()
+            return
+
+        if quota_state.get("is_free_mode"):
+            print(
+                f"[DEVICE TAP FREE MODE] tenant={tenant_info.get('name')} "
+                f"remaining={quota_state.get('remaining_for_target')} "
+                f"max_remaining={quota_state.get('max_remaining_any')}"
+            )
 
         tenant_name = tenant_info.get("name", "Unknown Tenant")
         timestamp = datetime.datetime.now()
@@ -174,6 +192,42 @@ def main():
     """Main function to run the keyboard listener and sound manager."""
     app_state.load_all_data()
     sound_manager.start_worker()
+
+    def sse_listener():
+        url = f"{API_BASE_URL}/sse"
+        while True:
+            try:
+                with requests.get(url, stream=True, timeout=90) as response:
+                    response.raise_for_status()
+                    event_lines = []
+                    for raw_line in response.iter_lines(decode_unicode=True):
+                        if raw_line is None:
+                            continue
+                        line = raw_line.strip()
+                        if not line:
+                            if event_lines:
+                                payload = "\n".join(event_lines)
+                                event_lines = []
+                                if payload.startswith("data:"):
+                                    try:
+                                        json_payload = payload.replace("data:", "", 1).strip()
+                                        json.loads(json_payload)
+                                        print("[SSE LISTENER] update diterima, refresh data tenant.")
+                                        app_state.load_all_data()
+                                    except json.JSONDecodeError:
+                                        print("[SSE LISTENER] gagal parsing payload SSE.")
+                            continue
+                        if line.startswith(":"):
+                            continue
+                        event_lines.append(line)
+            except Exception as exc:
+                print(f"[SSE LISTENER] koneksi terputus: {exc}. Reconnect 5 detik.")
+                time.sleep(5)
+
+    global _sse_thread_started
+    if not _sse_thread_started:
+        threading.Thread(target=sse_listener, daemon=True).start()
+        _sse_thread_started = True
 
     print("Starting raw keyboard input listener...")
     create_input_window_and_loop(handle_key_press)
