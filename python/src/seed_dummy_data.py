@@ -144,8 +144,8 @@ def seed_dummy_data():
         print("Inserted tenant menu dummy data.")
 
         devices = [
-            ("1d537d2c", 1),
             ("73a0fcf", 2),
+            ("2cb6fd84", 1),
         ]
         cursor.executemany(
             """

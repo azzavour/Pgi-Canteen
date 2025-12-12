@@ -554,6 +554,17 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
         )
         conn.commit()
 
+        # Trigger SSE to update monitoring dashboard after pre-order/transaction creation
+        if sse_manager.main_event_loop:
+            sse_payload = {
+                "id": str(tenant["id"]),
+                "name": employee["name"],
+            }
+            asyncio.run_coroutine_threadsafe(
+                sse_manager.trigger_sse_event_async(sse_payload),
+                sse_manager.main_event_loop,
+            )
+
         order_payload = {
             "ticket_number": ticket_number,
             "order_code": order_code,
