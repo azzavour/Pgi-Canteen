@@ -36,6 +36,7 @@ export default function TenantEdit() {
   const [quota, setQuota] = useState(0);
   const [menu, setMenu] = useState("");
   const [isLimited, setIsLimited] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,12 +56,14 @@ export default function TenantEdit() {
           quota: data.quota,
           menu: data.menu.join("\n"),
           isLimited: data.is_limited,
+          verificationCode: data.verification_code || "",
         };
 
         setName(mappedData.name);
         setQuota(mappedData.quota);
         setMenu(mappedData.menu);
         setIsLimited(mappedData.isLimited);
+        setVerificationCode(mappedData.verificationCode);
       } catch (error) {
         let message: string;
         if (error instanceof Error) {
@@ -149,6 +152,19 @@ export default function TenantEdit() {
               <CardTitle className="text-2xl mb-4">Form Edit Tenant</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="code" className="text-lg">
+                  Tenant Code (read-only)
+                </Label>
+                <Input
+                  id="code"
+                  className="text-lg p-2 font-mono"
+                  value={verificationCode || "-"}
+                  readOnly
+                  disabled
+                />
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="tenantName" className="text-lg">
                   Tenant Name

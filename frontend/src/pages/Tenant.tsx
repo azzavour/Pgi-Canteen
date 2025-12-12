@@ -23,6 +23,7 @@ interface Tenant {
   name: string;
   quota: number;
   isLimited: boolean;
+  verificationCode?: string;
   menu: string[];
 }
 
@@ -31,6 +32,7 @@ interface TenantResponse {
   name: string;
   quota: number;
   is_limited: boolean;
+  verification_code?: string;
   menu: string[];
 }
 
@@ -53,6 +55,7 @@ export default function Tenant() {
           name: tenant.name,
           quota: tenant.quota,
           isLimited: tenant.is_limited,
+          verificationCode: tenant.verification_code,
           menu: tenant.menu,
         }));
         setTenants(mappedData);
@@ -125,6 +128,9 @@ export default function Tenant() {
                     Name
                   </th>
                   <th className="px-6 py-3 border-b text-left font-semibold text-gray-600">
+                    Code
+                  </th>
+                  <th className="px-6 py-3 border-b text-left font-semibold text-gray-600">
                     Quota
                   </th>
                   <th className="px-6 py-3 border-b text-left font-semibold text-gray-600">
@@ -141,6 +147,9 @@ export default function Tenant() {
                     <td className="px-6 py-3 border-b">{index + 1}</td>
                     <td className="px-6 py-3 border-b">{tenant.id}</td>
                     <td className="px-6 py-3 border-b">{tenant.name}</td>
+                    <td className="px-6 py-3 border-b font-mono text-sm">
+                      {tenant.verificationCode || "-"}
+                    </td>
                     <td className="px-6 py-3 border-b">{tenant.quota}</td>
                     <td className="px-6 py-3 border-b">
                       {tenant.isLimited ? "Yes" : "No"}
