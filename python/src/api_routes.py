@@ -30,11 +30,20 @@ router = APIRouter()
 
 
 def generate_ticket_number(
-    order_datetime: datetime.datetime, queue_number: int
+    order_datetime: datetime.datetime, sequence_number: int
 ) -> str:
-    if queue_number >= 0:
-        return f"{queue_number:03d}"
-    return str(queue_number)
+    if sequence_number >= 0:
+        return f"{sequence_number:03d}"
+    return str(sequence_number)
+
+
+def get_tenant_prefix(tenant_name: Optional[str]) -> str:
+    name = (tenant_name or "").lower()
+    if "yanti" in name:
+        return "A"
+    if "rima" in name:
+        return "B"
+    return ""
 
 
 def get_whatsapp_number_for_tenant(tenant_name: str) -> Optional[str]:
@@ -369,6 +378,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 detail=f"Tenant dengan ID '{preorder.tenant_id}' tidak ditemukan.",
             )
 
+        tenant_prefix = get_tenant_prefix(tenant["name"])
         try:
             quota_state = evaluate_tenant_quota_for_today(conn, tenant["id"])
         except ValueError as exc:
@@ -437,6 +447,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             (preorder.tenant_id, today),
         )
         order_count_today = cursor.fetchone()[0] + 1
+        transaction_number = order_count_today
 
         quota_value = tenant["quota"] or 0
 
@@ -483,13 +494,20 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
         else:
             queue_number = remaining_after
 
+        if queue_number is None:
+            queue_code = "-"
+        elif tenant_prefix:
+            queue_code = f"{tenant_prefix}{queue_number}"
+        else:
+            queue_code = str(queue_number)
+
         remaining_quota: Optional[int] = None
         if quota_value > 0:
             remaining_quota = remaining_after
 
         order_code = uuid4().hex
         order_datetime = datetime.datetime.now()
-        ticket_number = generate_ticket_number(order_datetime, queue_number)
+        ticket_number = generate_ticket_number(order_datetime, transaction_number)
         weekday_names = [
             "Senin",
             "Selasa",
@@ -577,6 +595,8 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             "menu_label": preorder.menu_label,
             "menu_items": [{"label": preorder.menu_label, "qty": 1}],
             "queue_number": queue_number,
+            "queue_code": queue_code,
+            "transaction_number": ticket_number,
         }
         if employee_email:
             background_tasks.add_task(
@@ -606,6 +626,8 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 "menuLabel": preorder.menu_label,
                 "orderDate": today,
                 "queueNumber": queue_number,
+                "queueCode": queue_code,
+                "transactionNumber": ticket_number,
                 "remainingQuota": remaining_quota,
             }
         )

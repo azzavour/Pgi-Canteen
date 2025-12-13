@@ -87,15 +87,25 @@ def _get_day_and_date_from_order_date(order_date: Optional[str]) -> tuple[str, s
 
 
 def _get_whatsapp_day_time(order_date: Optional[str]) -> tuple[str, str]:
+    """
+    Format ISO order_date into (Hari, dd/mm/YYYY) and HH.MM using backend time only.
+    """
     if not order_date:
         return "", ""
-    normalized = order_date.strip()
+    normalized = str(order_date).strip()
+    if not normalized:
+        return "", ""
     if normalized.endswith(("Z", "z")):
         normalized = normalized[:-1] + "+00:00"
+    if "T" not in normalized and " " in normalized:
+        normalized = normalized.replace(" ", "T", 1)
     try:
         dt = datetime.datetime.fromisoformat(normalized)
     except ValueError:
         return "", ""
+    if dt.tzinfo is not None:
+        wib_tz = datetime.timezone(datetime.timedelta(hours=7))
+        dt = dt.astimezone(wib_tz)
     weekday_names = [
         "Senin",
         "Selasa",
@@ -165,9 +175,17 @@ def send_order_confirmation(
     ticket_number = order.get("ticket_number") or order.get("order_code") or ""
     order_datetime_text = order.get("order_datetime_text") or order.get("order_date") or ""
     menu_label = order.get("menu_label") or order.get("menu") or "-"
-    menu_entries = _build_menu_lines(order)
-    menu_lines = "\n".join(menu_entries)
     queue_number = order.get("queue_number")
+    queue_code_value = order.get("queue_code")
+    if not queue_code_value:
+        if queue_number is not None:
+            queue_code_value = (
+                f"{tenant_prefix}{queue_number}" if tenant_prefix else str(queue_number)
+            )
+        else:
+            queue_code_value = "-"
+    transaction_number = order.get("transaction_number") or ticket_number
+    queue_code_display = queue_code_value or "-"
     date_for_subject = order.get("subject_date") or order_datetime_text
     tenant_verification_code = (
         order.get("tenant_verification_code")
@@ -176,16 +194,13 @@ def send_order_confirmation(
     )
     tenant_prefix = _get_tenant_prefix(tenant_name)
     ticket_display_code = (
-        f"{tenant_verification_code}-{ticket_number}"
-        if tenant_verification_code and ticket_number
-        else ticket_number
+        f"{tenant_verification_code}-{transaction_number}"
+        if tenant_verification_code and transaction_number
+        else transaction_number
     )
 
     subject = f"Konfirmasi Pre-Order Cawang Canteen - {date_for_subject}"
     greeting = f"Halo {employee_name},"
-
-    queue_text = f"\nNomor Antrean: {queue_number}" if queue_number else ""
-    day_name, date_part = _get_day_and_date(order_datetime_text)
 
     plain_text = f"""
 {greeting}
@@ -198,32 +213,40 @@ Terima kasih atas pengertian dan kerja sama Anda.
 
 ORDER : {ticket_display_code} {order_datetime_text}
 
-Nama        : {employee_name} ({employee_id})
-Tenant      : {tenant_name}
-Menu        : {menu_label}
-Hari/tanggal : {day_name or "-"}
-Waktu        : {date_part or "-"}
-Nomor antre  : {((tenant_prefix + " ") if tenant_prefix else "") + (str(queue_number) if queue_number else "-")}
-Kode tenant : {tenant_verification_code or "-"}
-
-Kirim kode ini ({ticket_display_code or tenant_verification_code or "-"}) saat konfirmasi WhatsApp setelah memindai QR.
+{employee_name.upper()}
+{employee_id}
+Nomor antrean: {queue_code_display}
+Menu: {menu_label}
+Tenant: {tenant_name}
 """.strip()
 
     whatsapp_url = _build_whatsapp_url(order, employee_name, employee_id)
     if whatsapp_url:
-        qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=260x260&data={quote_plus(whatsapp_url)}"
+        qr_code_url = (
+            f"https://api.qrserver.com/v1/create-qr-code/?size=260x260&data={quote_plus(whatsapp_url)}"
+        )
         qr_section = f"""
-            <div style="margin:12px 0;">
-              <img src="{qr_code_url}" alt="QR WhatsApp" width="210" height="210" style="border:1px solid #000;padding:6px;background:#fff;" />
-            </div>
-            <div>
-              <a href="{whatsapp_url}" style="font-size:12px;color:#1d4ed8;text-decoration:none;">Klik di sini untuk buka WhatsApp</a>
-            </div>
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:collapse;">
+              <tr>
+                <td align="center" style="padding-bottom:10px;">
+                  <div style="width:200px;height:200px;border:1px solid #d1d5db;background:#fff;line-height:0;text-align:center;">
+                    <img src="{qr_code_url}" alt="QR WhatsApp" width="200" height="200" style="display:block;margin:0 auto;" />
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td align="center">
+                  <p style="font-size:11px;color:#555;line-height:1.4;text-align:center;margin:0;">
+                    Scan QR ini untuk membuka WhatsApp dengan format pesan yang sama.
+                  </p>
+                </td>
+              </tr>
+            </table>
         """
     else:
         qr_section = """
-            <div style="margin:12px 0;padding:40px 10px;border:1px dashed #999;font-size:12px;color:#555;text-align:center;">
-              QR WhatsApp tidak tersedia
+            <div style="width:220px;height:220px;border:1px dashed #cbd5f5;background:#f8fafc;display:flex;align-items:center;justify-content:center;font-size:12px;color:#555;">
+              QR tidak tersedia
             </div>
         """
 
@@ -253,19 +276,13 @@ Kirim kode ini ({ticket_display_code or tenant_verification_code or "-"}) saat k
                 {employee_name.upper()}
               </div>
               <div style="font-size:13px;margin-bottom:12px;">{employee_id}</div>
-              <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:12px;">
-                {"<span style='font-weight:bold;font-size:48px;'>{}</span>".format(tenant_prefix) if tenant_prefix else ""}
-                <span style="font-weight:bold;font-size:56px;">
-                  {queue_number or "-"}
-                </span>
+              <div style="font-weight:bold;font-size:56px;margin-bottom:12px;">
+                {queue_code_display}
               </div>
               <div style="font-weight:bold;font-size:13px;text-transform:uppercase;margin-bottom:4px;">
                 {menu_label}
               </div>
               <div style="font-size:12px;">{tenant_name}</div>
-              <div style="font-size:12px;margin-top:8px;">
-                Kode Tenant: <strong>{tenant_verification_code or "-"}</strong>
-              </div>
             </td>
             <td width="45%" style="text-align:center;padding:8px;">
               <div style="font-weight:bold;font-size:16px;margin-bottom:8px;">SCAN KONFIRMASI ORDER</div>
@@ -273,14 +290,6 @@ Kirim kode ini ({ticket_display_code or tenant_verification_code or "-"}) saat k
             </td>
           </tr>
         </table>
-        <div style="font-size:11px;margin-top:12px;text-align:left;">
-          # {ticket_display_code}<br/><br/>
-          Halo Bu, saya {employee_name} (ID: {employee_id})<br/><br/>
-          sudah memesan {menu_label} di {tenant_name} dengan detail pesanan :<br/><br/>
-          Hari/tanggal : {day_name or "-"}<br/>
-          Waktu : {date_part or "-"}<br/>
-          Nomor pesanan : {(tenant_prefix or "") + (str(queue_number) if queue_number is not None else "-")}
-        </div>
       </div>
     </div>
   </body>

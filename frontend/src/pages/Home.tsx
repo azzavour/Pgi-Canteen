@@ -56,6 +56,8 @@ interface OrderResult {
   menuLabel: string;
   orderDate: string;
   queueNumber: number;
+  queueCode?: string;
+  transactionNumber?: string;
   tenantVerificationCode?: string;
 }
 
@@ -155,28 +157,23 @@ const [orderDateTimeText, setOrderDateTimeText] = useState("");
   const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
 const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
 const [statusError, setStatusError] = useState<string | null>(null);
-const queueNumberFormatted =
-  orderResult && orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
-    ? String(orderResult.queueNumber).padStart(3, "0")
-    : orderResult?.orderCode ?? "";
+const transactionNumberDisplay =
+  orderResult?.transactionNumber || orderResult?.orderCode || "";
 const ticketDisplayCode =
-  orderResult && queueNumberFormatted
+  orderResult && transactionNumberDisplay
     ? orderResult.tenantVerificationCode
-      ? `${orderResult.tenantVerificationCode}-${queueNumberFormatted}`
-      : queueNumberFormatted
+      ? `${orderResult.tenantVerificationCode}-${transactionNumberDisplay}`
+      : transactionNumberDisplay
     : "";
+const queueCodeDisplay = orderResult?.queueCode || "";
 const whatsappMessage =
   orderResult && (ticketDisplayCode || orderResult.orderCode)
     ? (() => {
         const { dayLine, timeLine } = formatDayTime(
           orderDateTimeText || orderResult.orderDate
         );
-        const prefix = getTenantPrefix(orderResult.tenantName);
-        const queueCode =
-          orderResult.queueNumber !== undefined && orderResult.queueNumber !== null
-            ? `${prefix}${orderResult.queueNumber}`
-            : "-";
         const combinedCode = ticketDisplayCode || orderResult.orderCode;
+        const queueCode = queueCodeDisplay || "-";
         return (
           `#${combinedCode}\n\n` +
           `Halo Bu, saya ${orderResult.employeeName} (${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} dengan detail pesanan :\n\n` +
@@ -438,6 +435,8 @@ const whatsappMessage =
         menuLabel: data.menuLabel,
         orderDate: data.orderDate,
         queueNumber: data.queueNumber,
+        queueCode: data.queueCode,
+        transactionNumber: data.transactionNumber,
       };
       setOrderResult(ticketData);
       const formattedDate = new Date().toLocaleString("id-ID", {
@@ -894,11 +893,8 @@ const whatsappMessage =
                   <div className="text-sm text-gray-700">
                     {orderResult.employeeId}
                   </div>
-                      <div className="mt-4 text-7xl font-black leading-none flex items-center justify-center gap-4">
-                        {getTenantPrefix(orderResult.tenantName) && (
-                          <span>{getTenantPrefix(orderResult.tenantName)}</span>
-                        )}
-                        <span>{orderResult.queueNumber}</span>
+                      <div className="mt-4 text-7xl font-black leading-none flex items-center justify-center">
+                        <span>{queueCodeDisplay || "-"}</span>
                       </div>
                   <div className="mt-4 text-sm font-semibold uppercase">
                     {orderResult.menuLabel}
