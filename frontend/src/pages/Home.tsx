@@ -128,7 +128,7 @@ const [orderDateTimeText, setOrderDateTimeText] = useState("");
 const [isTicketQrLoading, setIsTicketQrLoading] = useState(false);
   const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
 const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
-const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 const transactionNumberDisplay =
   orderResult?.transactionNumber || orderResult?.orderCode || "";
 const ticketDisplayCode =
@@ -156,6 +156,9 @@ const whatsappMessage =
       })()
     : "";
   const sseRefreshTimer = useRef<number | null>(null);
+  const redirectToMonitor = useCallback(() => {
+    window.location.replace("/pgi-canteen/monitor");
+  }, []);
 
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
@@ -258,11 +261,7 @@ const whatsappMessage =
         params.get("portal_token") ?? params.get("token");
 
       if (!employeeIdParam || !portalTokenParam) {
-        if (isMounted) {
-          setAuthError("Akses harus melalui portal. Parameter URL tidak lengkap.");
-          setCurrentUser(null);
-          setAuthLoading(false);
-        }
+        redirectToMonitor();
         return;
       }
 
@@ -276,6 +275,10 @@ const whatsappMessage =
           }),
         });
 
+        if (resp.status === 401 || resp.status === 403) {
+          redirectToMonitor();
+          return;
+        }
         if (!resp.ok) {
           throw new Error("Portal session invalid");
         }
@@ -304,7 +307,7 @@ const whatsappMessage =
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [redirectToMonitor]);
 
   useEffect(() => {
     let isMounted = true;

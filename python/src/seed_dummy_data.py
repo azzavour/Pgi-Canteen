@@ -89,7 +89,7 @@ def seed_dummy_data():
         print("Inserted employee dummy data.")
 
         tenants = [
-            (1, "Bu Yanti", 1, 1, generate_verification_code()),
+            (1, "Bu Yanti", 2, 1, generate_verification_code()),
             (2, "Bu Rima", 1, 1, generate_verification_code()),
         ]
         cursor.executemany(
