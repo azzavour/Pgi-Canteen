@@ -154,6 +154,7 @@ const [preorderError, setPreorderError] = useState<string | null>(null);
 const [isSubmitting, setIsSubmitting] = useState(false);
 const [showTicket, setShowTicket] = useState(false);
 const [orderDateTimeText, setOrderDateTimeText] = useState("");
+const [isTicketQrLoading, setIsTicketQrLoading] = useState(false);
   const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
 const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
 const [statusError, setStatusError] = useState<string | null>(null);
@@ -449,6 +450,10 @@ const whatsappMessage =
         hour12: false,
       });
       setOrderDateTimeText(formattedDate);
+      const hasWaDestination = Boolean(
+        getWhatsAppNumberForTenant(ticketData.tenantName)
+      );
+      setIsTicketQrLoading(hasWaDestination);
       setShowTicket(true);
       setIsPreorderOpen(false);
       try {
@@ -907,6 +912,11 @@ const whatsappMessage =
                   <p className="mb-4 text-sm font-semibold tracking-wide text-center">
                     SCAN KONFIRMASI ORDER
                   </p>
+                  {isTicketQrLoading && (
+                    <p className="mb-3 rounded-full bg-blue-50 px-4 py-2 text-[11px] font-medium text-blue-700 text-center">
+                      QR sedang diproses, mohon tunggu beberapa detik...
+                    </p>
+                  )}
                   {(() => {
                     const waNumber = getWhatsAppNumberForTenant(
                       orderResult.tenantName
@@ -932,6 +942,8 @@ const whatsappMessage =
                             src={qrUrl}
                             alt="QR WhatsApp"
                             className="h-48 w-48"
+                            onLoad={() => setIsTicketQrLoading(false)}
+                            onError={() => setIsTicketQrLoading(false)}
                           />
                         </div>
                         <p className="text-[10px] text-gray-500 text-center leading-snug">
@@ -947,7 +959,10 @@ const whatsappMessage =
             <div className="mt-4 mb-6 flex justify-center">
               <button
                 type="button"
-                onClick={() => setShowTicket(false)}
+                onClick={() => {
+                  setShowTicket(false);
+                  setIsTicketQrLoading(false);
+                }}
                 className="rounded-full border border-gray-400 px-8 py-2 text-sm font-medium hover:bg-gray-50"
               >
                 Tutup
