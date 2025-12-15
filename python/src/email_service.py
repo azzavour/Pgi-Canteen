@@ -2,6 +2,7 @@ import datetime
 import os
 import smtplib
 from email.message import EmailMessage
+from email.utils import formataddr
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
@@ -12,6 +13,7 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD") or ""
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 SMTP_USE_AUTH = os.getenv("SMTP_USE_AUTH", "true").lower() == "true"
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USERNAME or "no-reply@cawang-canteen.local")
+SMTP_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Cawang Canteen")
 
 
 def _build_menu_lines(order: Dict[str, Any]) -> List[str]:
@@ -298,7 +300,7 @@ Tenant: {tenant_name}
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = SMTP_FROM or SMTP_USERNAME
+    msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM or SMTP_USERNAME))
     msg["To"] = to_email
     msg.set_content(plain_text)
     msg.add_alternative(html_body, subtype="html")
