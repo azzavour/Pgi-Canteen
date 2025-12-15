@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "../components/ui/card";
-import { cn } from "../lib/utils";
+import { VendorCards } from "../components/VendorCards";
+import type {
+  VendorCardData,
+  VendorLastOrder,
+} from "../components/VendorCards";
 
 const DAY_NAMES = [
   "Senin",
@@ -26,23 +23,7 @@ type CanteenStatus = {
   close_time: string;
 };
 
-interface VendorLastOrder {
-  queueNumber: number;
-  menuLabel: string;
-  employeeName: string;
-  employeeId: string;
-}
-
-interface Vendor {
-  deviceCode: string;
-  tenantId: number;
-  tenantName: string;
-  quota: number;
-  menu: string[];
-  available: number;
-  used: number;
-  lastOrder: VendorLastOrder | null;
-  color: string;
+interface Vendor extends VendorCardData {
   verificationCode?: string;
 }
 
@@ -66,17 +47,6 @@ function getWhatsAppNumberForTenant(tenantName: string): string | null {
   if (tenantName.includes("Yanti")) return "6285880259653";
   if (tenantName.includes("Rima")) return "6285718899709";
   return null;
-}
-
-function getTenantPrefix(tenantName: string): string {
-  const lowerName = tenantName.toLowerCase();
-  if (lowerName.includes("yanti")) {
-    return "A";
-  }
-  if (lowerName.includes("rima")) {
-    return "B";
-  }
-  return "";
 }
 
 function formatDayTime(raw: string | null | undefined) {
@@ -637,73 +607,11 @@ const whatsappMessage =
       </header>
       <main className="bg-gray-100 min-h-screen">
         <div className="mx-auto max-w-5xl px-3 pb-6 pt-4 sm:px-6 sm:pt-6">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {vendors.map((vendor, index) => (
-              <Card
-                key={vendor.deviceCode || `vendor-${index}`}
-                className="cursor-pointer rounded-3xl border-4 border-blue-500 bg-white p-4 shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl sm:p-6"
-                onClick={() => handleOpenPreorder(vendor)}
-              >
-                <CardHeader className="pb-3">
-                  <p className="text-xs text-gray-500 mb-1">Klik untuk order</p>
-                  <div className="text-center">
-                    <CardTitle className="text-3xl font-bold text-gray-900">
-                      {vendor.tenantName}
-                    </CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="text-center text-xl text-gray-700">
-                    Available:
-                    <div className="text-7xl font-black text-slate-800 my-3">
-                      <div className="flex items-center justify-center gap-4">
-                        {getTenantPrefix(vendor.tenantName) && (
-                          <span className="text-7xl font-black text-slate-800">
-                            {getTenantPrefix(vendor.tenantName)}
-                          </span>
-                        )}
-                        <span>
-                          {Number(vendor.quota - vendor.used).toLocaleString("id-ID")}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-lg text-gray-600">
-                      Ordered:{" "}
-                      <span className={cn(vendor.color, "font-bold")}>
-                        {vendor.used}
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-                <CardFooter className="pt-4">
-                  <ul className="space-y-2 text-base text-gray-700">
-                    {vendor.menu.map((item, id) => (
-                      <li key={id} className="flex items-start">
-                        <span
-                          className={cn("mt-1 h-3 w-3 rounded-full mr-2", {
-                            "bg-blue-500": id % 5 === 0,
-                            "bg-orange-500": id % 5 === 1,
-                            "bg-green-500": id % 5 === 2,
-                            "bg-yellow-500": id % 5 === 3,
-                            "bg-purple-500": id % 5 === 4,
-                          })}
-                        ></span>
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardFooter>
-                <div className="mt-4 border-t border-gray-200 pt-4 text-center">
-                  <p className="text-sm font-medium text-gray-600 mb-2">Last Order</p>
-                  <p className="rounded-full border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-800">
-                      {vendor.lastOrder
-                        ? `${vendor.lastOrder.employeeName ?? ""} (${vendor.lastOrder.employeeId ?? ""})`
-                        : "Be The First to Order"}
-                  </p>
-                </div>
-              </Card>
-            ))}
-          </div>
+          <VendorCards
+            vendors={vendors}
+            mode="portal"
+            onVendorSelect={handleOpenPreorder}
+          />
           <div className="text-center mt-8 rounded-2xl bg-white px-6 py-5 shadow-sm">
             <div className="relative h-20 overflow-hidden">
               <p className="absolute top-0 left-0 w-full text-center text-xl text-blue-800 opacity-0 message-item">

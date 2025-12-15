@@ -13,6 +13,7 @@ import TenantEdit from "./pages/TenantEdit";
 import TransactionCreate from "./pages/TransactionCreate";
 import TransactionEdit from "./pages/TransactionEdit";
 import TransactionExportPage from "./pages/TransactionExport";
+import Monitor from "./pages/Monitor";
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
         <Route path="/transactions/edit/:id" element={<TransactionEdit />} />
         <Route path="/transactions/export" element={<TransactionExportPage />} />
         <Route path="/bind-tenant" element={<BindTenant />} />
+        <Route path="/monitor" element={<Monitor />} />
       </Routes>
       <Toaster position="top-center" richColors />
     </BrowserRouter>
