@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { VendorCards } from "../components/VendorCards";
 import type {
   VendorCardData,
@@ -155,6 +155,7 @@ const whatsappMessage =
         );
       })()
     : "";
+  const sseRefreshTimer = useRef<number | null>(null);
 
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
@@ -456,51 +457,19 @@ const whatsappMessage =
     if (!currentUser || authError) {
       return;
     }
+
     let eventSource: EventSource | null = null;
+
     function initializeSSE() {
       eventSource = new EventSource(import.meta.env.VITE_API_URL + "/sse");
 
-        eventSource.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          setVendors((prevVendors) => {
-            return prevVendors.map((vendor) => {
-              if (vendor.tenantId === Number(data.id)) {
-                const newUsed = vendor.used + 1;
-                let newColor = "text-green-500"; // Reset to default
-                if (newUsed === vendor.quota) {
-                  newColor = "text-red-500";
-                } else if (newUsed > (vendor.quota * 2) / 3) {
-                  newColor = "text-yellow-500";
-                }
-                const newAvailable = vendor.quota - newUsed;
-                const eventEmployeeName = data.name ?? vendor.lastOrder?.employeeName ?? "";
-                const incomingEmployeeId =
-                  data.employee_id ?? data.employeeId ?? "";
-                const resolvedEmployeeId =
-                  incomingEmployeeId || vendor.lastOrder?.employeeId || "";
-
-                return {
-                  ...vendor,
-                  used: newUsed,
-                  available: newAvailable,
-                  lastOrder: vendor.lastOrder
-                    ? {
-                        ...vendor.lastOrder,
-                        employeeName: eventEmployeeName,
-                        employeeId: resolvedEmployeeId,
-                      }
-                    : {
-                        queueNumber: newUsed,
-                        menuLabel: "",
-                        employeeName: eventEmployeeName,
-                        employeeId: resolvedEmployeeId,
-                      },
-                  color: newColor,
-                };
-              }
-              return vendor;
-          });
-        });
+      eventSource.onmessage = () => {
+        if (sseRefreshTimer.current) {
+          window.clearTimeout(sseRefreshTimer.current);
+        }
+        sseRefreshTimer.current = window.setTimeout(() => {
+          loadDashboard();
+        }, 500);
       };
 
       eventSource.onerror = (err) => {
@@ -508,12 +477,17 @@ const whatsappMessage =
         eventSource?.close();
       };
     }
+
     initializeSSE();
 
     return () => {
+      if (sseRefreshTimer.current) {
+        window.clearTimeout(sseRefreshTimer.current);
+        sseRefreshTimer.current = null;
+      }
       eventSource?.close();
     };
-  }, [currentUser, authError]);
+  }, [currentUser, authError, loadDashboard]);
 
   useEffect(() => {
     const timerId = setInterval(() => {

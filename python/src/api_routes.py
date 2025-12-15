@@ -441,9 +441,9 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
         cursor.execute(
             """
             SELECT COUNT(*)
-            FROM preorders
+            FROM transactions
             WHERE tenant_id = ?
-              AND order_date = ?
+              AND DATE(transaction_date) = DATE(?)
             """,
             (preorder.tenant_id, today),
         )
@@ -459,14 +459,14 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                     """
                     SELECT t.id,
                            t.quota,
-                           COALESCE(p.order_count, 0) AS order_count
+                           COALESCE(tx.order_count, 0) AS order_count
                     FROM tenants t
                     LEFT JOIN (
                         SELECT tenant_id, COUNT(*) AS order_count
-                        FROM preorders
-                        WHERE order_date = ?
+                        FROM transactions
+                        WHERE DATE(transaction_date) = DATE(?)
                         GROUP BY tenant_id
-                    ) p ON p.tenant_id = t.id
+                    ) tx ON tx.tenant_id = t.id
                     WHERE t.quota IS NOT NULL AND t.quota > 0
                     """,
                     (today,),
@@ -1030,9 +1030,9 @@ def get_dashboard_overview():
             cursor.execute(
                 """
                 SELECT COALESCE(COUNT(*), 0) AS ordered_count
-                FROM preorders
+                FROM transactions
                 WHERE tenant_id = ?
-                  AND DATE(order_date) = DATE('now','localtime')
+                  AND DATE(transaction_date) = DATE('now','localtime')
                 """,
                 (tenant_id,),
             )
@@ -1042,15 +1042,14 @@ def get_dashboard_overview():
             cursor.execute(
                 """
                 SELECT
-                    p.queue_number,
-                    p.menu_label,
-                    e.name AS employee_name,
-                    e.employee_id
-                FROM preorders p
-                LEFT JOIN employees e ON e.employee_id = p.employee_id
-                WHERE p.tenant_id = ?
-                  AND DATE(p.order_date) = DATE('now','localtime')
-                ORDER BY p.order_date DESC, p.id DESC
+                    tr.employee_name,
+                    tr.employee_id,
+                    tr.transaction_date,
+                    tr.id
+                FROM transactions tr
+                WHERE tr.tenant_id = ?
+                  AND DATE(tr.transaction_date) = DATE('now','localtime')
+                ORDER BY tr.transaction_date DESC, tr.id DESC
                 LIMIT 1
                 """,
                 (tenant_id,),
@@ -1059,8 +1058,8 @@ def get_dashboard_overview():
             last_order = None
             if last_order_row:
                 last_order = {
-                    "queueNumber": last_order_row["queue_number"],
-                    "menuLabel": last_order_row["menu_label"],
+                    "queueNumber": None,
+                    "menuLabel": None,
                     "employeeName": last_order_row["employee_name"],
                     "employeeId": last_order_row["employee_id"],
                 }
