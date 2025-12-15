@@ -16,9 +16,14 @@ SAMPLE_EMPLOYEE = {
 def get_db_connection():
     """Establishes a connection to the SQLite database."""
     db_file = os.getenv("DATABASE_FILE", "data/canteen.db")
-    os.makedirs(os.path.dirname(db_file), exist_ok=True)
-    conn = sqlite3.connect(db_file)
+    db_dir = os.path.dirname(db_file)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    conn = sqlite3.connect(db_file, timeout=5)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA busy_timeout = 5000;")
     return conn
 
 
@@ -175,6 +180,24 @@ def create_tables(fresh: bool = False):
         """
         CREATE INDEX IF NOT EXISTS idx_preorders_tenant_date_status
         ON preorders (tenant_id, order_date, status)
+    """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_preorders_tenant_date
+        ON preorders (tenant_id, order_date)
+    """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_transactions_tenant_date
+        ON transactions (tenant_id, transaction_date)
+    """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_transactions_card_date
+        ON transactions (card_number, transaction_date)
     """
     )
 

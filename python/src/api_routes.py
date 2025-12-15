@@ -8,6 +8,7 @@ from datetime import date
 import io
 import calendar
 import os
+import time
 from uuid import uuid4
 
 from fastapi import APIRouter, Request, HTTPException, status, Query, BackgroundTasks
@@ -27,6 +28,31 @@ from .portal_control import read_override
 from update_employee_email import update_employee_email
 
 router = APIRouter()
+
+
+def _get_local_day_bounds_from_string(date_text: Optional[str] = None) -> tuple[str, str]:
+    """
+    Returns (start_of_day, end_of_day) strings in local time for the provided date.
+    """
+    if date_text:
+        normalized = date_text.strip()
+        if not normalized:
+            base_date = datetime.datetime.now().date()
+        else:
+            normalized = normalized.split("T")[0][:10]
+            try:
+                base_date = datetime.date.fromisoformat(normalized)
+            except ValueError:
+                base_date = datetime.datetime.fromisoformat(normalized).date()
+    else:
+        base_date = datetime.datetime.now().date()
+
+    start_dt = datetime.datetime.combine(base_date, datetime.time.min)
+    end_dt = start_dt + datetime.timedelta(days=1)
+    return (
+        start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+    )
 
 
 def generate_ticket_number(
@@ -257,6 +283,11 @@ def get_tenant_quota_state(tenant_id: int):
 def create_transaction(transaction_data: TransactionCreateRequest):
     conn = get_db_connection()
     cursor = conn.cursor()
+    start_time = time.perf_counter()
+    success = False
+    print(
+        f"[create_transaction] start tenant_id={transaction_data.tenant_id} employee_id={transaction_data.employee_id}"
+    )
     try:
 
         cursor.execute(
@@ -313,6 +344,7 @@ def create_transaction(transaction_data: TransactionCreateRequest):
                 sse_manager.main_event_loop,
             )
 
+        success = True
         return {"message": "Transaction logged successfully."}
     except HTTPException:
         conn.rollback()
@@ -325,6 +357,11 @@ def create_transaction(transaction_data: TransactionCreateRequest):
         )
     finally:
         conn.close()
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        status_label = "ok" if success else "failed"
+        print(
+            f"[create_transaction] end tenant_id={transaction_data.tenant_id} employee_id={transaction_data.employee_id} status={status_label} duration={duration_ms:.2f}ms"
+        )
 
 
 @router.post("/preorder", status_code=status.HTTP_201_CREATED)
@@ -395,6 +432,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             )
 
         today = date.today().isoformat()
+        day_start, day_end = _get_local_day_bounds_from_string(today)
         cursor.execute(
             """
             SELECT 1
@@ -443,9 +481,10 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             SELECT COUNT(*)
             FROM transactions
             WHERE tenant_id = ?
-              AND DATE(transaction_date) = DATE(?)
+              AND transaction_date >= ?
+              AND transaction_date < ?
             """,
-            (preorder.tenant_id, today),
+            (preorder.tenant_id, day_start, day_end),
         )
         order_count_today = cursor.fetchone()[0] + 1
         transaction_number = order_count_today
@@ -464,12 +503,13 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                     LEFT JOIN (
                         SELECT tenant_id, COUNT(*) AS order_count
                         FROM transactions
-                        WHERE DATE(transaction_date) = DATE(?)
+                        WHERE transaction_date >= ?
+                          AND transaction_date < ?
                         GROUP BY tenant_id
                     ) tx ON tx.tenant_id = t.id
                     WHERE t.quota IS NOT NULL AND t.quota > 0
                     """,
-                    (today,),
+                    (day_start, day_end),
                 )
                 tenants_with_quota = cursor.fetchall()
                 any_tenant_with_remaining = False
@@ -665,10 +705,16 @@ async def check_duplicate_transaction(
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
+    day_start, day_end = _get_local_day_bounds_from_string(transaction_date)
     try:
         cursor.execute(
-            "SELECT 1 FROM transactions WHERE card_number = ? AND DATE(transaction_date) = ?",
-            (card_number, transaction_date),
+            """
+            SELECT 1 FROM transactions
+            WHERE card_number = ?
+              AND transaction_date >= ?
+              AND transaction_date < ?
+            """,
+            (card_number, day_start, day_end),
         )
         exists = cursor.fetchone() is not None
         return {"exists": exists}
@@ -688,10 +734,17 @@ async def get_daily_transaction_count(
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
+    day_start, day_end = _get_local_day_bounds_from_string(transaction_date)
     try:
         cursor.execute(
-            "SELECT COUNT(*) FROM transactions WHERE tenant_id = ? AND DATE(transaction_date) = ?",
-            (tenant_id, transaction_date),
+            """
+            SELECT COUNT(*)
+            FROM transactions
+            WHERE tenant_id = ?
+              AND transaction_date >= ?
+              AND transaction_date < ?
+            """,
+            (tenant_id, day_start, day_end),
         )
         count = cursor.fetchone()[0]
         return {"count": count}
@@ -988,6 +1041,7 @@ def get_dashboard_overview():
     cursor = conn.cursor()
     try:
         today = datetime.date.today().isoformat()
+        day_start, day_end = _get_local_day_bounds_from_string()
 
         query = """
             SELECT
@@ -1032,9 +1086,10 @@ def get_dashboard_overview():
                 SELECT COALESCE(COUNT(*), 0) AS ordered_count
                 FROM transactions
                 WHERE tenant_id = ?
-                  AND DATE(transaction_date) = DATE('now','localtime')
+                  AND transaction_date >= ?
+                  AND transaction_date < ?
                 """,
-                (tenant_id,),
+                (tenant_id, day_start, day_end),
             )
             ordered_row = cursor.fetchone()
             ordered = int(ordered_row["ordered_count"]) if ordered_row else 0
@@ -1048,11 +1103,12 @@ def get_dashboard_overview():
                     tr.id
                 FROM transactions tr
                 WHERE tr.tenant_id = ?
-                  AND DATE(tr.transaction_date) = DATE('now','localtime')
+                  AND tr.transaction_date >= ?
+                  AND tr.transaction_date < ?
                 ORDER BY tr.transaction_date DESC, tr.id DESC
                 LIMIT 1
                 """,
-                (tenant_id,),
+                (tenant_id, day_start, day_end),
             )
             last_order_row = cursor.fetchone()
             last_order = None
@@ -1553,15 +1609,16 @@ async def export_transactions_to_excel(
 ):
     conn = get_db_connection()
     try:
+        day_start, day_end = _get_local_day_bounds_from_string(date)
         employee_group = employee_group.split()
         cursor = conn.cursor()
 
         query_transactions = """
             SELECT id, card_number, employee_id, employee_name, employee_group, tenant_id, tenant_name, transaction_date
             FROM transactions
-            WHERE DATE(transaction_date) = ?
+            WHERE transaction_date >= ? AND transaction_date < ?
         """
-        params_transactions = [date]
+        params_transactions = [day_start, day_end]
         if employee_group:
             query_transactions += " AND "
             for group in employee_group:

@@ -33,6 +33,7 @@ export default function Monitor() {
   const [time, setTime] = useState(new Date().toLocaleTimeString());
   const [isLoading, setIsLoading] = useState(true);
   const initialLoadRef = useRef(true);
+  const sseRefreshTimerRef = useRef<number | null>(null);
 
   const loadOverview = useCallback(async () => {
     if (initialLoadRef.current) {
@@ -92,6 +93,34 @@ export default function Monitor() {
     loadOverview();
     const intervalId = window.setInterval(loadOverview, REFRESH_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
+  }, [loadOverview]);
+
+  useEffect(() => {
+    const eventSource = new EventSource(
+      `${import.meta.env.VITE_API_URL}/sse`
+    );
+
+    eventSource.onmessage = () => {
+      if (sseRefreshTimerRef.current) {
+        window.clearTimeout(sseRefreshTimerRef.current);
+      }
+      sseRefreshTimerRef.current = window.setTimeout(() => {
+        loadOverview();
+      }, 400);
+    };
+
+    eventSource.onerror = (err) => {
+      console.error("Monitor SSE error:", err);
+      eventSource.close();
+    };
+
+    return () => {
+      if (sseRefreshTimerRef.current) {
+        window.clearTimeout(sseRefreshTimerRef.current);
+        sseRefreshTimerRef.current = null;
+      }
+      eventSource.close();
+    };
   }, [loadOverview]);
 
   useEffect(() => {

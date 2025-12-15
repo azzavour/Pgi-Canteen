@@ -7,7 +7,14 @@ def evaluate_tenant_quota_for_today(conn, target_tenant_id: int) -> Dict[str, An
     Hitung remaining kuota untuk seluruh tenant dan tentukan apakah tenant target
     diperbolehkan menerima order saat ini.
     """
-    today = datetime.date.today().isoformat()
+    today = datetime.datetime.now().date()
+    day_start = datetime.datetime.combine(today, datetime.time.min).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    day_end = (
+        datetime.datetime.combine(today, datetime.time.min)
+        + datetime.timedelta(days=1)
+    ).strftime("%Y-%m-%d %H:%M:%S")
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -19,11 +26,12 @@ def evaluate_tenant_quota_for_today(conn, target_tenant_id: int) -> Dict[str, An
         LEFT JOIN (
             SELECT tenant_id, COUNT(*) AS order_count
             FROM transactions
-            WHERE DATE(transaction_date) = ?
+            WHERE transaction_date >= ?
+              AND transaction_date < ?
             GROUP BY tenant_id
         ) tx ON tx.tenant_id = t.id
         """,
-        (today,),
+        (day_start, day_end),
     )
     rows = cursor.fetchall()
     if not rows:
