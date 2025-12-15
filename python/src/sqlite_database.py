@@ -135,10 +135,11 @@ def create_tables(fresh: bool = False):
             employee_group TEXT,
             tenant_id INTEGER,
             tenant_name TEXT,
-            transaction_date TEXT DEFAULT (datetime('now','localtime'))
+            transaction_date TEXT NOT NULL DEFAULT (datetime('now','localtime'))
         )
     """
     )
+    _ensure_transactions_timestamp_schema(cursor)
 
     # Preorders Table
     cursor.execute(
@@ -180,6 +181,88 @@ def create_tables(fresh: bool = False):
     conn.commit()
     conn.close()
     print("Database and tables created successfully.")
+
+
+def _ensure_transactions_timestamp_schema(cursor):
+    """
+    Make sure transactions.transaction_date stores full timestamp (TEXT, NOT NULL)
+    and normalize existing YYYY-MM-DD rows.
+    """
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'")
+    if cursor.fetchone() is None:
+        return
+
+    cursor.execute("PRAGMA table_info(transactions)")
+    columns = cursor.fetchall()
+    if not columns:
+        return
+
+    column_info = {col[1]: col for col in columns}
+    tx_col = column_info.get("transaction_date")
+    if tx_col is None:
+        return
+
+    declared_type = (tx_col[2] or "").upper()
+    not_null = bool(tx_col[3])
+
+    needs_rebuild = declared_type != "TEXT" or not not_null
+
+    if needs_rebuild:
+        cursor.execute("ALTER TABLE transactions RENAME TO transactions_old")
+        cursor.execute(
+            """
+            CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_number TEXT,
+                employee_id TEXT,
+                employee_name TEXT,
+                employee_group TEXT,
+                tenant_id INTEGER,
+                tenant_name TEXT,
+                transaction_date TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+            )
+        """
+        )
+        cursor.execute(
+            """
+            INSERT INTO transactions (
+                id,
+                card_number,
+                employee_id,
+                employee_name,
+                employee_group,
+                tenant_id,
+                tenant_name,
+                transaction_date
+            )
+            SELECT
+                id,
+                card_number,
+                employee_id,
+                employee_name,
+                employee_group,
+                tenant_id,
+                tenant_name,
+                CASE
+                    WHEN transaction_date IS NULL OR transaction_date = ''
+                        THEN datetime('now','localtime')
+                    WHEN LENGTH(transaction_date) = 10
+                        THEN transaction_date || ' 00:00:00'
+                    ELSE transaction_date
+                END
+            FROM transactions_old
+        """
+        )
+        cursor.execute("DROP TABLE transactions_old")
+    else:
+        cursor.execute(
+            """
+            UPDATE transactions
+            SET transaction_date = transaction_date || ' 00:00:00'
+            WHERE transaction_date IS NOT NULL
+              AND LENGTH(transaction_date) = 10
+        """
+        )
 
 
 if __name__ == "__main__":

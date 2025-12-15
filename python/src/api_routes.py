@@ -508,6 +508,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
 
         order_code = uuid4().hex
         order_datetime = datetime.datetime.now()
+        transaction_timestamp = order_datetime.strftime("%Y-%m-%d %H:%M:%S")
         ticket_number = generate_ticket_number(order_datetime, transaction_number)
         weekday_names = [
             "Senin",
@@ -568,7 +569,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 employee["employee_group"],
                 tenant["id"],
                 tenant["name"],
-                today,
+                transaction_timestamp,
             ),
         )
         conn.commit()
