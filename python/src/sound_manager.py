@@ -1,6 +1,7 @@
 import os
 import queue
 import threading
+import time
 import pygame
 
 
@@ -42,12 +43,28 @@ class SoundManager:
 
     def _sound_worker(self):
         while True:
-            sound_name = self.sound_queue.get()
+            item = self.sound_queue.get()
             try:
+                if isinstance(item, dict):
+                    sound_name = item.get("sound") or item.get("name")
+                    metadata = item.get("metadata") or {}
+                else:
+                    sound_name = item
+                    metadata = {}
                 sound_object = self.sounds.get(sound_name)
                 if sound_object:
                     while pygame.mixer.get_busy():
                         pygame.time.wait(10)
+                    tap_id = metadata.get("tap_id")
+                    t_sound_played = int(time.time() * 1000)
+                    if tap_id:
+                        print(
+                            f"[sound_play] sound={sound_name} tap_id={tap_id} t_sound_played={t_sound_played}"
+                        )
+                    else:
+                        print(
+                            f"[sound_play] sound={sound_name} tap_id=NA t_sound_played={t_sound_played}"
+                        )
                     sound_object.play()
                 else:
                     print(f"Warning: Sound '{sound_name}' not found.")
@@ -61,36 +78,24 @@ class SoundManager:
         sound_thread.start()
         print("Sound worker thread started.")
 
-    def play(self, sound_name: str):
+    def _queue_sound(self, sound_name: str, metadata: dict | None = None):
         if sound_name not in self.sounds:
             print(f"Attempted to play non-existent sound: '{sound_name}'")
             return
-        self.sound_queue.put(sound_name)
+        payload = {"sound": sound_name, "metadata": metadata or {}}
+        self.sound_queue.put(payload)
 
-    def play_success(self):
-        sound_name = "success"
-        if sound_name not in self.sounds:
-            print(f"Attempted to play non-existent sound: '{sound_name}'")
-            return
-        self.sound_queue.put(sound_name)
+    def play(self, sound_name: str, metadata: dict | None = None):
+        self._queue_sound(sound_name, metadata)
 
-    def play_failed(self):
-        sound_name = "failure"
-        if sound_name not in self.sounds:
-            print(f"Attempted to play non-existent sound: '{sound_name}'")
-            return
-        self.sound_queue.put(sound_name)
+    def play_success(self, metadata: dict | None = None):
+        self._queue_sound("success", metadata)
 
-    def play_limit_reached(self):
-        sound_name = "limit_reached"
-        if sound_name not in self.sounds:
-            print(f"Attempted to play non-existent sound: '{sound_name}'")
-            return
-        self.sound_queue.put(sound_name)
+    def play_failed(self, metadata: dict | None = None):
+        self._queue_sound("failure", metadata)
 
-    def play_unrecognized(self):
-        sound_name = "unrecognized"
-        if sound_name not in self.sounds:
-            print(f"Attempted to play non-existent sound: '{sound_name}'")
-            return
-        self.sound_queue.put(sound_name)
+    def play_limit_reached(self, metadata: dict | None = None):
+        self._queue_sound("limit_reached", metadata)
+
+    def play_unrecognized(self, metadata: dict | None = None):
+        self._queue_sound("unrecognized", metadata)

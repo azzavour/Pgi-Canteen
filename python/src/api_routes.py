@@ -1,6 +1,7 @@
 import json
 import math
-from typing import List, Optional
+import sqlite3
+from typing import List, Optional, Literal
 from collections import defaultdict
 import asyncio
 import datetime
@@ -10,6 +11,7 @@ import calendar
 import os
 import time
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Request, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse, Response
@@ -28,6 +30,15 @@ from .portal_control import read_override
 from update_employee_email import update_employee_email
 
 router = APIRouter()
+
+try:
+    JAKARTA_TZ = ZoneInfo("Asia/Jakarta")
+except ZoneInfoNotFoundError:
+    JAKARTA_TZ = datetime.timezone(datetime.timedelta(hours=7))
+
+DAILY_TRANSACTION_LIMIT_MESSAGE = (
+    "Anda sudah melakukan transaksi hari ini (preorder/tap). Hanya 1 transaksi per hari."
+)
 
 
 def _get_local_day_bounds_from_string(date_text: Optional[str] = None) -> tuple[str, str]:
@@ -52,6 +63,40 @@ def _get_local_day_bounds_from_string(date_text: Optional[str] = None) -> tuple[
     return (
         start_dt.strftime("%Y-%m-%d %H:%M:%S"),
         end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+
+def _normalize_timestamp_to_local(
+    raw_ts: Optional[str], *, field_name: str = "timestamp"
+) -> tuple[datetime.datetime, str, str]:
+    """
+    Normalizes raw timestamp string (or None) into Asia/Jakarta timezone.
+    Returns tuple of (aware datetime, transaction_date_text, transaction_day).
+    """
+    local_tz = JAKARTA_TZ
+    if not raw_ts:
+        local_dt = datetime.datetime.now(tz=local_tz)
+    else:
+        normalized = raw_ts.strip()
+        if not normalized:
+            local_dt = datetime.datetime.now(tz=local_tz)
+        else:
+            if normalized.endswith("Z"):
+                normalized = normalized[:-1] + "+00:00"
+            try:
+                parsed = datetime.datetime.fromisoformat(normalized)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"{field_name} harus berupa timestamp ISO8601 yang valid.",
+                )
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=local_tz)
+            local_dt = parsed.astimezone(local_tz)
+    return (
+        local_dt,
+        local_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        local_dt.date().isoformat(),
     )
 
 
@@ -141,6 +186,22 @@ def get_canteen_status(now: datetime.datetime) -> dict:
     return status_payload
 
 
+def _card_has_transaction_for_day(cursor, card_number: str, transaction_day: str) -> bool:
+    if not card_number or not transaction_day:
+        return False
+    cursor.execute(
+        """
+        SELECT 1
+        FROM transactions
+        WHERE card_number = ?
+          AND transaction_day = ?
+        LIMIT 1
+        """,
+        (card_number, transaction_day),
+    )
+    return cursor.fetchone() is not None
+
+
 class EmployeeCreateRequest(BaseModel):
     card_number: str = Field(min_length=1, alias="cardNumber")
     employee_id: str = Field(min_length=1, alias="employeeId")
@@ -214,6 +275,68 @@ class TransactionUpdateRequest(BaseModel):
         validate_by_name = True
 
 
+TapStatusLiteral = Literal["accepted", "rejected"]
+TapReasonLiteral = Literal[
+    "duplicate",
+    "quota_exceeded",
+    "unknown_card",
+    "unknown_tenant",
+    "db_busy",
+    "ok",
+    "duplicate_daily",
+]
+
+
+class TapTransactionRequest(BaseModel):
+    card_number: str = Field(min_length=1)
+    tenant_id: int
+    tap_ts: Optional[str] = Field(default=None, alias="tap_ts")
+    tap_id: Optional[str] = Field(default=None, alias="tap_id")
+
+    class Config:
+        validate_by_name = True
+
+
+class TapTransactionSummary(BaseModel):
+    transaction_id: int
+    card_number: str
+    employee_id: str
+    employee_name: str
+    employee_group: Optional[str] = None
+    tenant_id: int
+    tenant_name: str
+    transaction_date: str
+    transaction_day: str
+
+
+class TapTransactionResponse(BaseModel):
+    status: TapStatusLiteral
+    reason: TapReasonLiteral
+    tap_id: Optional[str] = Field(default=None, alias="tap_id")
+    server_commit_ts: Optional[int] = Field(default=None, alias="server_commit_ts")
+    ticket_number: Optional[str] = None
+    transaction: Optional[TapTransactionSummary] = None
+
+
+def _build_tap_response(
+    status_value: TapStatusLiteral,
+    reason_value: TapReasonLiteral,
+    *,
+    ticket_number: Optional[str] = None,
+    summary: Optional[TapTransactionSummary] = None,
+    tap_id: Optional[str] = None,
+    server_commit_ts: Optional[int] = None,
+) -> TapTransactionResponse:
+    return TapTransactionResponse(
+        status=status_value,
+        reason=reason_value,
+        ticket_number=ticket_number,
+        transaction=summary,
+        tap_id=tap_id,
+        server_commit_ts=server_commit_ts,
+    )
+
+
 class PreorderCreateRequest(BaseModel):
     employee_id: str = Field(min_length=1, alias="employeeId")
     tenant_id: int = Field(alias="tenantId")
@@ -279,6 +402,250 @@ def get_tenant_quota_state(tenant_id: int):
         conn.close()
 
 
+@router.post("/tap", response_model=TapTransactionResponse, status_code=status.HTTP_200_OK)
+def tap_transaction(tap_request: TapTransactionRequest):
+    """
+    Single-shot endpoint khusus device TAP.
+    Melakukan lookup kartu, cek tenant serta kuota, dan menulis transaksi dalam satu transaksi DB.
+    """
+    start_time = time.perf_counter()
+    tap_id_value = (
+        (tap_request.tap_id or "").strip()
+        or f"{tap_request.card_number}-{int(time.time() * 1000)}"
+    )
+    server_commit_ts: Optional[int] = None
+
+    def _log_tap(status_value: TapStatusLiteral, reason_value: TapReasonLiteral):
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        print(
+            f"[tap_transaction] tap_id={tap_id_value} status={status_value} reason={reason_value} duration={duration_ms:.2f}ms"
+        )
+
+    def _trace_stage(stage: str) -> int:
+        timestamp_ms = int(time.time() * 1000)
+        print(f"[tap_trace] tap_id={tap_id_value} stage={stage} ts={timestamp_ms}")
+        return timestamp_ms
+
+    def _tap_response(
+        status_value: TapStatusLiteral,
+        reason_value: TapReasonLiteral,
+        *,
+        summary: Optional[TapTransactionSummary] = None,
+    ) -> TapTransactionResponse:
+        response = _build_tap_response(
+            status_value=status_value,
+            reason_value=reason_value,
+            summary=summary,
+            tap_id=tap_id_value,
+            server_commit_ts=server_commit_ts,
+        )
+        _log_tap(status_value, reason_value)
+        return response
+
+    _trace_stage("t_server_start")
+
+    _, transaction_date_text, transaction_day = _normalize_timestamp_to_local(
+        tap_request.tap_ts, field_name="tap_ts"
+    )
+    conn = get_db_connection(mode="tap")
+    cursor = conn.cursor()
+    summary: Optional[TapTransactionSummary] = None
+    employee_row = None
+    tenant_row = None
+
+    try:
+        _trace_stage("t_before_begin_immediate")
+        cursor.execute("BEGIN IMMEDIATE")
+        _trace_stage("t_after_begin_immediate")
+
+        cursor.execute(
+            """
+            SELECT employee_id,
+                   card_number,
+                   name,
+                   employee_group,
+                   is_disabled,
+                   is_blocked
+            FROM employees
+            WHERE card_number = ?
+            """,
+            (tap_request.card_number,),
+        )
+        employee = cursor.fetchone()
+        if (
+            not employee
+            or employee["is_disabled"]
+            or employee["is_blocked"]
+        ):
+            conn.rollback()
+            return _tap_response(
+                status_value="rejected", reason_value="unknown_card"
+            )
+        employee_row = employee
+
+        if _card_has_transaction_for_day(
+            cursor, employee["card_number"], transaction_day
+        ):
+            conn.rollback()
+            return _tap_response(
+                status_value="rejected", reason_value="duplicate_daily"
+            )
+
+        cursor.execute(
+            """
+            SELECT id, name, quota, is_limited
+            FROM tenants
+            WHERE id = ?
+            """,
+            (tap_request.tenant_id,),
+        )
+        tenant = cursor.fetchone()
+        if not tenant:
+            conn.rollback()
+            return _tap_response(
+                status_value="rejected", reason_value="unknown_tenant"
+            )
+        tenant_row = tenant
+        quota_value = tenant["quota"] or 0
+        if quota_value > 0:
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM transactions
+                WHERE tenant_id = ?
+                  AND transaction_day = ?
+                """,
+                (tenant["id"], transaction_day),
+            )
+            tenant_orders_today = cursor.fetchone()[0]
+            if tenant_orders_today >= quota_value:
+                conn.rollback()
+                return _tap_response(
+                    status_value="rejected", reason_value="quota_exceeded"
+                )
+
+        _trace_stage("t_before_insert")
+        cursor.execute(
+            """
+            INSERT INTO transactions (
+                card_number,
+                employee_id,
+                employee_name,
+                employee_group,
+                tenant_id,
+                tenant_name,
+                transaction_date,
+                transaction_day
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                employee["card_number"],
+                employee["employee_id"],
+                employee["name"],
+                employee["employee_group"],
+                tenant["id"],
+                tenant["name"],
+                transaction_date_text,
+                transaction_day,
+            ),
+        )
+        transaction_id = cursor.lastrowid
+        conn.commit()
+        server_commit_ts = _trace_stage("t_after_commit")
+
+        summary = TapTransactionSummary(
+            transaction_id=transaction_id,
+            card_number=employee["card_number"],
+            employee_id=employee["employee_id"],
+            employee_name=employee["name"],
+            employee_group=employee["employee_group"],
+            tenant_id=tenant["id"],
+            tenant_name=tenant["name"],
+            transaction_date=transaction_date_text,
+            transaction_day=transaction_day,
+        )
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        error_text = str(exc).lower()
+        if "unique" in error_text or "transaction_day" in error_text:
+            return _tap_response(
+                status_value="rejected", reason_value="duplicate_daily"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Gagal membuat transaksi TAP: {exc}",
+        )
+    except sqlite3.OperationalError as exc:
+        conn.rollback()
+        message = str(exc).lower()
+        if "database is locked" in message:
+            resp = _tap_response(status_value="rejected", reason_value="db_busy")
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content=resp.dict(),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error saat TAP: {exc}",
+        )
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        error_text = str(exc).lower()
+        if (
+            "transaction_day" in error_text
+            or "idx_transactions_card_day" in error_text
+            or "unique" in error_text
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=DAILY_TRANSACTION_LIMIT_MESSAGE,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Gagal membuat pre-order: {exc}",
+        )
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"TAP endpoint gagal: {exc}",
+        )
+    finally:
+        conn.close()
+
+    if not summary or not employee_row or not tenant_row:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TAP berhasil tetapi ringkasan tidak terbentuk.",
+        )
+
+    response_payload = _tap_response(
+        status_value="accepted",
+        reason_value="ok",
+        summary=summary,
+    )
+
+    _trace_stage("t_before_sse_trigger")
+    if sse_manager.main_event_loop:
+        sse_payload = {
+            "id": str(tenant_row["id"]),
+            "name": employee_row["name"],
+            "employee_id": employee_row["employee_id"],
+            "tap_id": tap_id_value,
+            "server_commit_ts": server_commit_ts,
+        }
+        asyncio.run_coroutine_threadsafe(
+            sse_manager.trigger_sse_event_async(sse_payload),
+            sse_manager.main_event_loop,
+        )
+    _trace_stage("t_after_sse_trigger")
+
+    return response_payload
+
+
 @router.post("/transaction", status_code=status.HTTP_201_CREATED)
 def create_transaction(transaction_data: TransactionCreateRequest):
     conn = get_db_connection()
@@ -316,10 +683,33 @@ def create_transaction(transaction_data: TransactionCreateRequest):
         employee_group = employee["employee_group"]
         tenant_name = tenant["name"]
 
+        (
+            _,
+            normalized_transaction_date,
+            transaction_day,
+        ) = _normalize_timestamp_to_local(
+            transaction_data.transaction_date, field_name="transactionDate"
+        )
+
+        if _card_has_transaction_for_day(cursor, employee_card_number, transaction_day):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=DAILY_TRANSACTION_LIMIT_MESSAGE,
+            )
+
         cursor.execute(
             """
-            INSERT INTO transactions (card_number, employee_id, employee_name, employee_group, tenant_id, tenant_name, transaction_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO transactions (
+                card_number,
+                employee_id,
+                employee_name,
+                employee_group,
+                tenant_id,
+                tenant_name,
+                transaction_date,
+                transaction_day
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 employee_card_number,
@@ -328,15 +718,19 @@ def create_transaction(transaction_data: TransactionCreateRequest):
                 employee_group,
                 transaction_data.tenant_id,
                 tenant_name,
-                transaction_data.transaction_date,
+                normalized_transaction_date,
+                transaction_day,
             ),
         )
         conn.commit()
+        server_commit_ts = int(time.time() * 1000)
 
         sse_payload = {
             "id": str(transaction_data.tenant_id),
             "name": employee_name,
             "employee_id": transaction_data.employee_id,
+            "tap_id": None,
+            "server_commit_ts": server_commit_ts,
         }
         if sse_manager.main_event_loop:
             asyncio.run_coroutine_threadsafe(
@@ -346,6 +740,18 @@ def create_transaction(transaction_data: TransactionCreateRequest):
 
         success = True
         return {"message": "Transaction logged successfully."}
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        error_text = str(exc).lower()
+        if "unique" in error_text or "transaction_day" in error_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=DAILY_TRANSACTION_LIMIT_MESSAGE,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to log transaction: {exc}",
+        )
     except HTTPException:
         conn.rollback()
         raise
@@ -397,6 +803,14 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 )
 
         card_number = employee["card_number"] or ""
+        today = datetime.datetime.now(tz=JAKARTA_TZ).date().isoformat()
+
+        if _card_has_transaction_for_day(cursor, card_number, today):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=DAILY_TRANSACTION_LIMIT_MESSAGE,
+            )
+
         employee_email = (employee["email"] or "").strip()
         if not employee_email:
             employee_email = update_employee_email(preorder.employee_id)
@@ -431,7 +845,6 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 detail="Kuota tenant ini sudah habis sementara tenant lain masih memiliki sisa.",
             )
 
-        today = date.today().isoformat()
         day_start, day_end = _get_local_day_bounds_from_string(today)
         cursor.execute(
             """
@@ -547,8 +960,9 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             remaining_quota = remaining_after
 
         order_code = uuid4().hex
-        order_datetime = datetime.datetime.now()
+        order_datetime = datetime.datetime.now(tz=JAKARTA_TZ)
         transaction_timestamp = order_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        transaction_day = today
         ticket_number = generate_ticket_number(order_datetime, transaction_number)
         weekday_names = [
             "Senin",
@@ -599,8 +1013,9 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 employee_group,
                 tenant_id,
                 tenant_name,
-                transaction_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                transaction_date,
+                transaction_day
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 card_number,
@@ -610,9 +1025,11 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 tenant["id"],
                 tenant["name"],
                 transaction_timestamp,
+                transaction_day,
             ),
         )
         conn.commit()
+        server_commit_ts = int(time.time() * 1000)
 
         # Trigger SSE to update monitoring dashboard after pre-order/transaction creation
         if sse_manager.main_event_loop:
@@ -620,6 +1037,8 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 "id": str(tenant["id"]),
                 "name": employee["name"],
                 "employee_id": preorder.employee_id,
+                "tap_id": None,
+                "server_commit_ts": server_commit_ts,
             }
             asyncio.run_coroutine_threadsafe(
                 sse_manager.trigger_sse_event_async(sse_payload),
@@ -959,7 +1378,12 @@ async def register_new_device(device_data: DeviceCreateRequest):
 @router.get("/sse")
 async def sse_endpoint(request: Request):
     return StreamingResponse(
-        sse_manager.event_stream(request), media_type="text/event-stream"
+        sse_manager.event_stream(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
     )
 
 

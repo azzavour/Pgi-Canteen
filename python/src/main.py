@@ -16,6 +16,7 @@ load_dotenv()
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 DEBOUNCE_SECONDS = float(os.getenv("DEBOUNCE_SECONDS", 0.2))
 APP_STATE_REFRESH_SECONDS = int(os.getenv("APP_STATE_REFRESH_SECONDS", 300))
+TAP_REQUEST_TIMEOUT_SECONDS = float(os.getenv("TAP_REQUEST_TIMEOUT_SECONDS", 2.0))
 
 # --- Global State for this process ---
 sound_manager = SoundManager(asset_dir="assets")
@@ -24,6 +25,8 @@ debounce_timers = {}
 buffer_lock = threading.Lock()
 last_input_strings = {}
 _sse_thread_started = False
+tap_request_times: dict[str, dict[str, int]] = {}
+tap_request_lock = threading.Lock()
 
 
 def log_buffer(device_id):
@@ -79,99 +82,97 @@ def log_buffer(device_id):
     )
 
     try:
-        today = datetime.date.today()
         tenant_info = app_state.device_to_tenant_map.get(device_id, {})
 
         if not tenant_info:
             print(
                 f"Warning: Device ID '{device_id}' not found in tenant map. Transaction not logged."
             )
-            sound_manager.play_failed()
+            sound_manager.play_failed({"tap_id": None})
             return
 
         tenant_id = tenant_info.get("id")
-        is_limited = bool(tenant_info.get("is_limited"))
 
         if tenant_id is None:
             print(
                 f"[{device_id}] Tenant ID tidak ditemukan dalam mapping. Transaksi dibatalkan."
             )
-            sound_manager.play_failed()
+            sound_manager.play_failed({"tap_id": None})
             return
-
-        if is_limited:
-            duplicate_check_response = requests.get(
-                f"{API_BASE_URL}/transaction/check_duplicate",
-                params={
-                    "cardNumber": input_string,
-                    "transactionDate": today.isoformat(),
-                },
-            )
-            duplicate_check_response.raise_for_status()
-            if duplicate_check_response.json()["exists"]:
-                print(
-                    f"[{device_id}] Duplicate input found, not logging: '{input_string}'"
-                )
-                sound_manager.play_failed()
-                return
-
-        try:
-            quota_response = requests.get(
-                f"{API_BASE_URL}/tenant/{tenant_id}/quota-state"
-            )
-            quota_response.raise_for_status()
-            quota_state = quota_response.json()
-        except requests.exceptions.RequestException as quota_error:
-            print(f"[{device_id}] Gagal mengecek kuota tenant: {quota_error}")
-            sound_manager.play_failed()
-            return
-
-        if not quota_state.get("can_order_for_target", True):
-            print(
-                f"[DEVICE TAP BLOCKED] tenant={tenant_info.get('name')} "
-                f"employee={found_employee.get('employee_id')} "
-                f"remaining={quota_state.get('remaining_for_target')} "
-                f"max_remaining={quota_state.get('max_remaining_any')}"
-            )
-            sound_manager.play_limit_reached()
-            return
-
-        if quota_state.get("is_free_mode"):
-            print(
-                f"[DEVICE TAP FREE MODE] tenant={tenant_info.get('name')} "
-                f"remaining={quota_state.get('remaining_for_target')} "
-                f"max_remaining={quota_state.get('max_remaining_any')}"
-            )
 
         tenant_name = tenant_info.get("name", "Unknown Tenant")
-        timestamp = datetime.datetime.now()
-
-        # Log transaction via API
-        transaction_payload = {
-            "cardNumber": input_string,
-            "employeeId": found_employee.get("employee_id"),
-            "employeeName": found_employee.get("name"),
-            "employeeGroup": found_employee.get("employee_group"),
-            "tenantId": tenant_id,
-            "tenantName": tenant_name,
-            "transactionDate": timestamp.isoformat(),
+        tap_epoch_ms = int(time.time() * 1000)
+        tap_id = f"{input_string}-{tap_epoch_ms}"
+        tap_payload = {
+            "card_number": input_string,
+            "tenant_id": tenant_id,
+            "tap_ts": datetime.datetime.now().astimezone().isoformat(),
+            "tap_id": tap_id,
         }
-        transaction_response = requests.post(
-            f"{API_BASE_URL}/transaction", json=transaction_payload
-        )
-        transaction_response.raise_for_status()
 
+        def trigger_sound(sound_type: str):
+            sound_metadata = {"tap_id": tap_id}
+            t_sound_trigger = int(time.time() * 1000)
+            print(
+                f"[tap_device] tap_id={tap_id} stage=sound_trigger sound={sound_type} t_sound_trigger={t_sound_trigger}"
+            )
+            if sound_type == "success":
+                sound_manager.play_success(sound_metadata)
+            elif sound_type == "limit_reached":
+                sound_manager.play_limit_reached(sound_metadata)
+            else:
+                sound_manager.play_failed(sound_metadata)
+
+        request_start_ms = int(time.time() * 1000)
         print(
-            f"[{device_id}] Successfully logged transaction for card number: {input_string}"
+            f"[tap_device] tap_id={tap_id} stage=request_start device={device_id} ts={request_start_ms}"
         )
-        sound_manager.play_success()
+        response = requests.post(
+            f"{API_BASE_URL}/tap",
+            json=tap_payload,
+            timeout=TAP_REQUEST_TIMEOUT_SECONDS,
+        )
+        request_end_ms = int(time.time() * 1000)
+        rtt_ms = request_end_ms - request_start_ms
+        print(
+            f"[tap_device] tap_id={tap_id} stage=request_end device={device_id} ts={request_end_ms} rtt_ms={rtt_ms:.2f} status_code={response.status_code}"
+        )
+        response.raise_for_status()
+        response_data = response.json()
+        server_tap_id = response_data.get("tap_id") or tap_id
+        status_value = response_data.get("status")
+        reason_value = response_data.get("reason")
+        server_commit_ts = response_data.get("server_commit_ts")
+        tap_id = server_tap_id
+        print(
+            f"[tap_device] tap_id={tap_id} stage=response_parsed status={status_value} reason={reason_value} server_commit_ts={server_commit_ts}"
+        )
+
+        if status_value == "accepted":
+            with tap_request_lock:
+                tap_request_times[tap_id] = {
+                    "request_start_ms": request_start_ms,
+                    "request_end_ms": request_end_ms,
+                }
+            trigger_sound("success")
+            print(
+                f"[{device_id}] TAP success for card {input_string} -> tenant {tenant_name}"
+            )
+        else:
+            if reason_value == "quota_exceeded":
+                trigger_sound("limit_reached")
+            else:
+                trigger_sound("failed")
 
     except requests.exceptions.RequestException as e:
-        print(f"Error during transaction processing via API: {e}")
-        sound_manager.play_failed()
+        request_error_ts = int(time.time() * 1000)
+        print(
+            f"[tap_device] tap_id={locals().get('tap_id', 'NA')} stage=request_exception ts={request_error_ts} error={e}"
+        )
+        sound_manager.play_failed({"tap_id": locals().get("tap_id")})
     except Exception as e:
         print(f"An unexpected error occurred during transaction processing: {e}")
-        sound_manager.play_failed()
+        sound_manager.play_failed({"tap_id": locals().get("tap_id")})
 
 
 def handle_key_press(device_id, char):
@@ -211,9 +212,40 @@ def main():
                                 if payload.startswith("data:"):
                                     try:
                                         json_payload = payload.replace("data:", "", 1).strip()
-                                        json.loads(json_payload)
+                                        event_data = json.loads(json_payload)
+                                        tap_id = event_data.get("tap_id")
+                                        server_commit_ts = event_data.get("server_commit_ts")
+                                        t_sse_received = int(time.time() * 1000)
+                                        delta_ms = (
+                                            t_sse_received - server_commit_ts
+                                            if isinstance(server_commit_ts, int)
+                                            else None
+                                        )
+                                        print(
+                                            f"[tap_sse] tap_id={tap_id or 'N/A'} stage=sse_received t_sse_received={t_sse_received}"
+                                            + (
+                                                f" server_commit_ts={server_commit_ts} delta_ms={delta_ms}"
+                                                if server_commit_ts
+                                                else ""
+                                            )
+                                        )
+                                        start_info = None
+                                        if tap_id:
+                                            with tap_request_lock:
+                                                start_info = tap_request_times.pop(tap_id, None)
+                                        if start_info:
+                                            total_elapsed = (
+                                                t_sse_received
+                                                - start_info.get("request_start_ms", t_sse_received)
+                                            )
+                                            print(
+                                                f"[tap_sse] tap_id={tap_id} stage=sse_total_elapsed total_ms={total_elapsed}"
+                                            )
                                         print("[SSE LISTENER] update diterima, refresh data tenant.")
                                         app_state.load_all_data()
+                                        print(
+                                            f"[tap_sse] tap_id={tap_id or 'N/A'} stage=app_state_refreshed ts={int(time.time() * 1000)}"
+                                        )
                                     except json.JSONDecodeError:
                                         print("[SSE LISTENER] gagal parsing payload SSE.")
                             continue

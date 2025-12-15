@@ -13,17 +13,26 @@ SAMPLE_EMPLOYEE = {
 }
 
 
-def get_db_connection():
+def get_db_connection(mode: str = "default"):
     """Establishes a connection to the SQLite database."""
     db_file = os.getenv("DATABASE_FILE", "data/canteen.db")
     db_dir = os.path.dirname(db_file)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(db_file, timeout=5)
+
+    mode = (mode or "default").lower()
+    if mode == "tap":
+        timeout_seconds = 1
+        busy_timeout_ms = 1000
+    else:
+        timeout_seconds = 5
+        busy_timeout_ms = 5000
+
+    conn = sqlite3.connect(db_file, timeout=timeout_seconds)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
-    conn.execute("PRAGMA busy_timeout = 5000;")
+    conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms};")
     return conn
 
 
@@ -145,6 +154,7 @@ def create_tables(fresh: bool = False):
     """
     )
     _ensure_transactions_timestamp_schema(cursor)
+    _ensure_transaction_day_schema(cursor)
 
     # Preorders Table
     cursor.execute(
@@ -286,6 +296,43 @@ def _ensure_transactions_timestamp_schema(cursor):
               AND LENGTH(transaction_date) = 10
         """
         )
+
+
+def _ensure_transaction_day_schema(cursor):
+    """
+    Adds transaction_day column and unique index for (card_number, transaction_day).
+    """
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'"
+    )
+    if cursor.fetchone() is None:
+        return
+
+    cursor.execute("PRAGMA table_info(transactions)")
+    columns = cursor.fetchall()
+    if not columns:
+        return
+
+    column_names = [col[1] for col in columns]
+    if "transaction_day" not in column_names:
+        cursor.execute("ALTER TABLE transactions ADD COLUMN transaction_day TEXT")
+
+    cursor.execute(
+        """
+        UPDATE transactions
+        SET transaction_day = substr(transaction_date, 1, 10)
+        WHERE transaction_day IS NULL
+          AND transaction_date IS NOT NULL
+        """
+    )
+
+    cursor.execute("DROP INDEX IF EXISTS idx_transactions_card_day")
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_card_day
+        ON transactions (card_number, transaction_day)
+        """
+    )
 
 
 if __name__ == "__main__":

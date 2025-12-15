@@ -26,6 +26,20 @@ type OverviewResponseItem = {
   };
 };
 
+type MonitorSsePayload = {
+  tap_id?: string;
+  tapId?: string;
+  server_commit_ts?: number;
+  serverCommitTs?: number;
+};
+
+declare global {
+  interface Window {
+    monitorSoundPlayer?: () => void;
+    monitorSoundLogger?: (info: { tapId?: string; tSoundPlayed: number }) => void;
+  }
+}
+
 const REFRESH_INTERVAL_MS = 10_000;
 
 export default function Monitor() {
@@ -34,6 +48,47 @@ export default function Monitor() {
   const [isLoading, setIsLoading] = useState(true);
   const initialLoadRef = useRef(true);
   const sseRefreshTimerRef = useRef<number | null>(null);
+  const transactionAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = new Audio("/sounds/transaction.mp3");
+    audio.preload = "auto";
+    audio.load();
+    transactionAudioRef.current = audio;
+  }, []);
+
+  const logMonitorSound = useCallback((tapId?: string) => {
+    const tSoundPlayed = Date.now();
+    console.log("[MONITOR] sound played", tSoundPlayed, { tapId });
+    const audio = transactionAudioRef.current;
+    if (audio) {
+      try {
+        audio.currentTime = 0;
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch((err) =>
+            console.error("Monitor audio playback blocked:", err)
+          );
+        }
+      } catch (err) {
+        console.error("Monitor audio playback error:", err);
+      }
+    }
+    if (typeof window.monitorSoundPlayer === "function") {
+      try {
+        window.monitorSoundPlayer();
+      } catch (err) {
+        console.error("monitorSoundPlayer failed:", err);
+      }
+    }
+    if (typeof window.monitorSoundLogger === "function") {
+      try {
+        window.monitorSoundLogger({ tapId, tSoundPlayed });
+      } catch (err) {
+        console.error("monitorSoundLogger failed:", err);
+      }
+    }
+  }, []);
 
   const loadOverview = useCallback(async () => {
     if (initialLoadRef.current) {
@@ -90,8 +145,10 @@ export default function Monitor() {
   }, []);
 
   useEffect(() => {
-    loadOverview();
-    const intervalId = window.setInterval(loadOverview, REFRESH_INTERVAL_MS);
+    void loadOverview();
+    const intervalId = window.setInterval(() => {
+      void loadOverview();
+    }, REFRESH_INTERVAL_MS);
     return () => window.clearInterval(intervalId);
   }, [loadOverview]);
 
@@ -100,12 +157,36 @@ export default function Monitor() {
       `${import.meta.env.VITE_API_URL}/sse`
     );
 
-    eventSource.onmessage = () => {
+    eventSource.onmessage = (event) => {
+      let payloadData: MonitorSsePayload | null = null;
+      if (event?.data) {
+        try {
+          payloadData = JSON.parse(event.data);
+        } catch (err) {
+          console.error("Monitor SSE parse error:", err);
+        }
+      }
+      const tSseReceived = Date.now();
+      const tapId = payloadData?.tap_id ?? payloadData?.tapId;
+      const serverCommitTs =
+        payloadData?.server_commit_ts ?? payloadData?.serverCommitTs;
+      const deltaMs =
+        typeof serverCommitTs === "number"
+          ? tSseReceived - serverCommitTs
+          : null;
+      console.info(
+        `[monitor_trace] tapId=${tapId ?? "N/A"} t_sse_received=${tSseReceived}${
+          serverCommitTs ? ` server_commit_ts=${serverCommitTs} delta_ms=${deltaMs}` : ""
+        }`
+      );
+      console.log("[MONITOR] SSE received", tSseReceived, { tapId });
+      logMonitorSound(tapId);
+
       if (sseRefreshTimerRef.current) {
         window.clearTimeout(sseRefreshTimerRef.current);
       }
       sseRefreshTimerRef.current = window.setTimeout(() => {
-        loadOverview();
+        void loadOverview();
       }, 400);
     };
 
@@ -121,7 +202,7 @@ export default function Monitor() {
       }
       eventSource.close();
     };
-  }, [loadOverview]);
+  }, [loadOverview, logMonitorSound]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
