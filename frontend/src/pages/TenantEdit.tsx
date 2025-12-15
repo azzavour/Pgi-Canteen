@@ -39,6 +39,7 @@ export default function TenantEdit() {
   const [verificationCode, setVerificationCode] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -79,6 +80,33 @@ export default function TenantEdit() {
 
     fetchData();
   }, [id]);
+
+  const handleGenerateCode = async () => {
+    if (!id) {
+      return;
+    }
+    setRegenerating(true);
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/tenant/${id}/generate-code`,
+        {
+          method: "POST",
+        }
+      );
+      if (!response.ok) {
+        throw new Error("Failed to regenerate tenant code.");
+      }
+      const data = await response.json();
+      setVerificationCode(data.verificationCode || "");
+      toast.success("Tenant code updated.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to regenerate code.";
+      toast.error(message);
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   const handleSave = async () => {
     const payload = {
@@ -156,13 +184,23 @@ export default function TenantEdit() {
                 <Label htmlFor="code" className="text-lg">
                   Tenant Code (read-only)
                 </Label>
-                <Input
-                  id="code"
-                  className="text-lg p-2 font-mono"
-                  value={verificationCode || "-"}
-                  readOnly
-                  disabled
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="code"
+                    className="text-lg p-2 font-mono"
+                    value={verificationCode || "-"}
+                    readOnly
+                    disabled
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleGenerateCode}
+                    disabled={regenerating}
+                  >
+                    {regenerating ? "Generating..." : "Generate Code"}
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-2">
