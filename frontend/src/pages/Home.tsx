@@ -59,6 +59,7 @@ interface OrderResult {
   queueCode?: string;
   transactionNumber?: string;
   tenantVerificationCode?: string;
+  orderDateTimeText?: string;
 }
 
 function getWhatsAppNumberForTenant(tenantName: string): string | null {
@@ -435,12 +436,13 @@ const whatsappMessage =
         tenantVerificationCode: data.tenantVerificationCode,
         menuLabel: data.menuLabel,
         orderDate: data.orderDate,
+        orderDateTimeText: data.orderDateTimeText,
         queueNumber: data.queueNumber,
         queueCode: data.queueCode,
         transactionNumber: data.transactionNumber,
       };
       setOrderResult(ticketData);
-      const formattedDate = new Date().toLocaleString("id-ID", {
+      const fallbackDateText = new Date().toLocaleString("id-ID", {
         weekday: "long",
         day: "2-digit",
         month: "2-digit",
@@ -449,7 +451,7 @@ const whatsappMessage =
         minute: "2-digit",
         hour12: false,
       });
-      setOrderDateTimeText(formattedDate);
+      setOrderDateTimeText(data.orderDateTimeText || fallbackDateText);
       const hasWaDestination = Boolean(
         getWhatsAppNumberForTenant(ticketData.tenantName)
       );
@@ -488,38 +490,45 @@ const whatsappMessage =
     function initializeSSE() {
       eventSource = new EventSource(import.meta.env.VITE_API_URL + "/sse");
 
-      eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        setVendors((prevVendors) => {
-          return prevVendors.map((vendor) => {
-            console.log(vendor.tenantId === Number(data.id));
+        eventSource.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          setVendors((prevVendors) => {
+            return prevVendors.map((vendor) => {
+              if (vendor.tenantId === Number(data.id)) {
+                const newUsed = vendor.used + 1;
+                let newColor = "text-green-500"; // Reset to default
+                if (newUsed === vendor.quota) {
+                  newColor = "text-red-500";
+                } else if (newUsed > (vendor.quota * 2) / 3) {
+                  newColor = "text-yellow-500";
+                }
+                const newAvailable = vendor.quota - newUsed;
+                const eventEmployeeName = data.name ?? vendor.lastOrder?.employeeName ?? "";
+                const incomingEmployeeId =
+                  data.employee_id ?? data.employeeId ?? "";
+                const resolvedEmployeeId =
+                  incomingEmployeeId || vendor.lastOrder?.employeeId || "";
 
-            if (vendor.tenantId === Number(data.id)) {
-              const newUsed = vendor.used + 1;
-              let newColor = "text-green-500"; // Reset to default
-              if (newUsed === vendor.quota) {
-                newColor = "text-red-500";
-              } else if (newUsed > (vendor.quota * 2) / 3) {
-                newColor = "text-yellow-500";
+                return {
+                  ...vendor,
+                  used: newUsed,
+                  available: newAvailable,
+                  lastOrder: vendor.lastOrder
+                    ? {
+                        ...vendor.lastOrder,
+                        employeeName: eventEmployeeName,
+                        employeeId: resolvedEmployeeId,
+                      }
+                    : {
+                        queueNumber: newUsed,
+                        menuLabel: "",
+                        employeeName: eventEmployeeName,
+                        employeeId: resolvedEmployeeId,
+                      },
+                  color: newColor,
+                };
               }
-              const newAvailable = vendor.quota - newUsed;
-
-              return {
-                ...vendor,
-                used: newUsed,
-                available: newAvailable,
-                lastOrder: vendor.lastOrder
-                  ? { ...vendor.lastOrder, employeeName: data.name ?? "" }
-                  : {
-                      queueNumber: newUsed,
-                      menuLabel: "",
-                      employeeName: data.name ?? "",
-                      employeeId: "",
-                    },
-                color: newColor,
-              };
-            }
-            return vendor;
+              return vendor;
           });
         });
       };

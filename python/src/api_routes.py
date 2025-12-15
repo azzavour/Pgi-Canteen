@@ -305,6 +305,7 @@ def create_transaction(transaction_data: TransactionCreateRequest):
         sse_payload = {
             "id": str(transaction_data.tenant_id),
             "name": employee_name,
+            "employee_id": transaction_data.employee_id,
         }
         if sse_manager.main_event_loop:
             asyncio.run_coroutine_threadsafe(
@@ -577,6 +578,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
             sse_payload = {
                 "id": str(tenant["id"]),
                 "name": employee["name"],
+                "employee_id": preorder.employee_id,
             }
             asyncio.run_coroutine_threadsafe(
                 sse_manager.trigger_sse_event_async(sse_payload),
@@ -625,6 +627,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
                 "tenantVerificationCode": tenant_verification_code,
                 "menuLabel": preorder.menu_label,
                 "orderDate": today,
+                "orderDateTimeText": order_datetime_text,
                 "queueNumber": queue_number,
                 "queueCode": queue_code,
                 "transactionNumber": ticket_number,
