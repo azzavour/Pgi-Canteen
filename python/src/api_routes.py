@@ -510,22 +510,60 @@ def tap_transaction(tap_request: TapTransactionRequest):
                 status_value="rejected", reason_value="duplicate_daily"
             )
 
-        if quota_value > 0:
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM transactions
+            WHERE tenant_id = ?
+              AND transaction_day = ?
+            """,
+            (tenant["id"], transaction_day),
+        )
+        tenant_orders_today = cursor.fetchone()[0]
+        remaining_slots = quota_value - tenant_orders_today
+        allow_due_to_free_mode = False
+        if quota_value == 0:
+            quota_reason = "unlimited"
+        elif remaining_slots > 0:
+            quota_reason = "ok"
+        else:
             cursor.execute(
                 """
-                SELECT COUNT(*)
-                FROM transactions
-                WHERE tenant_id = ?
-                  AND transaction_day = ?
+                SELECT t.id,
+                       t.quota,
+                       COALESCE(tx.order_count, 0) AS order_count
+                FROM tenants t
+                LEFT JOIN (
+                    SELECT tenant_id, COUNT(*) AS order_count
+                    FROM transactions
+                    WHERE transaction_day = ?
+                    GROUP BY tenant_id
+                ) tx ON tx.tenant_id = t.id
+                WHERE t.quota IS NOT NULL AND t.quota > 0
                 """,
-                (tenant["id"], transaction_day),
+                (transaction_day,),
             )
-            tenant_orders_today = cursor.fetchone()[0]
-            if tenant_orders_today >= quota_value:
-                _rollback_if_needed()
-                return _tap_response(
-                    status_value="rejected", reason_value="quota_exceeded"
-                )
+            tenants_with_quota = cursor.fetchall()
+            any_tenant_with_remaining = False
+            for tenant_info in tenants_with_quota:
+                tenant_quota = tenant_info["quota"] or 0
+                tenant_taken = tenant_info["order_count"] or 0
+                if tenant_quota - tenant_taken > 0:
+                    any_tenant_with_remaining = True
+                    break
+            if any_tenant_with_remaining:
+                quota_reason = "quota_exceeded"
+            else:
+                quota_reason = "free_mode"
+                allow_due_to_free_mode = True
+        print(
+            f"[tap_quota] tenant_id={tenant['id']} quota={quota_value} count_today={tenant_orders_today} remaining={remaining_slots} reason={quota_reason}"
+        )
+        if quota_value > 0 and remaining_slots <= 0 and not allow_due_to_free_mode:
+            _rollback_if_needed()
+            return _tap_response(
+                status_value="rejected", reason_value="quota_exceeded"
+            )
 
         _trace_stage("t_before_insert")
         cursor.execute(
