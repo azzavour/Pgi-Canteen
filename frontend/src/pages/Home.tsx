@@ -156,9 +156,12 @@ const whatsappMessage =
       })()
     : "";
   const sseRefreshTimer = useRef<number | null>(null);
+  const basePath = import.meta.env.BASE_URL || "/";
+  const normalizedBasePath = basePath.endsWith("/") ? basePath : `${basePath}/`;
+  const monitorUrl = `${normalizedBasePath}monitor`;
   const redirectToMonitor = useCallback(() => {
-    window.location.replace("/pgi-canteen/monitor");
-  }, []);
+    window.location.replace(monitorUrl);
+  }, [monitorUrl]);
 
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
@@ -562,6 +565,14 @@ const whatsappMessage =
           <p className="text-sm text-gray-600">
             Jam layanan pemesanan Pre-Order: {canteenStatus.open_time}–
             {canteenStatus.close_time} WIB
+          </p>
+          <a
+            href={monitorUrl}
+            className="mt-4 inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+          >
+            Lihat Menu
+          </a>
+          <p className="mt-2 text-xs text-gray-500">
           </p>
         </div>
       </div>

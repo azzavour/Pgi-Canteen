@@ -1,7 +1,7 @@
 import json
 import math
 import sqlite3
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, cast, Any
 from collections import defaultdict
 import asyncio
 import datetime
@@ -26,7 +26,6 @@ from .email_service import send_order_confirmation
 from .portal_auth import verify_portal_token
 from .quota_utils import evaluate_tenant_quota_for_today
 from .tenant_utils import generate_verification_code
-from .portal_control import read_override
 from update_employee_email import update_employee_email
 
 router = APIRouter()
@@ -35,6 +34,9 @@ try:
     JAKARTA_TZ = ZoneInfo("Asia/Jakarta")
 except ZoneInfoNotFoundError:
     JAKARTA_TZ = datetime.timezone(datetime.timedelta(hours=7))
+
+CANTEEN_OPEN_HOUR = 8
+CANTEEN_CLOSE_HOUR = 11
 
 DAILY_TRANSACTION_LIMIT_MESSAGE = (
     "Anda sudah melakukan transaksi hari ini (preorder/tap). Hanya 1 transaksi per hari."
@@ -129,49 +131,122 @@ def get_whatsapp_number_for_tenant(tenant_name: str) -> Optional[str]:
     return None
 
 
+def is_within_operational_hours(
+    open_hour: int, close_hour: int, now: Optional[datetime.datetime] = None
+) -> bool:
+    now = now or datetime.datetime.now()
+    current_time = now.time()
+    start_time = datetime.time(open_hour, 0)
+    end_time = datetime.time(close_hour, 0)
+    return start_time <= current_time < end_time
+
+
+def _normalize_canteen_mode(raw_value: Optional[str]) -> Literal["OPEN", "CLOSE", "NORMAL"]:
+    value = (raw_value or "NORMAL").strip().upper()
+    if value not in {"OPEN", "CLOSE", "NORMAL"}:
+        value = "NORMAL"
+    return cast(Literal["OPEN", "CLOSE", "NORMAL"], value)
+
+
+def _get_or_create_canteen_status_row() -> dict[str, Any]:
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT mode, updated_at, updated_by FROM canteen_status WHERE id = 1")
+        row = cursor.fetchone()
+        if not row:
+            cursor.execute(
+                """
+                INSERT INTO canteen_status (id, mode, updated_at, updated_by)
+                VALUES (1, 'NORMAL', datetime('now','localtime'), NULL)
+                """
+            )
+            conn.commit()
+            cursor.execute("SELECT mode, updated_at, updated_by FROM canteen_status WHERE id = 1")
+            row = cursor.fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def get_canteen_mode() -> Literal["OPEN", "CLOSE", "NORMAL"]:
+    row = _get_or_create_canteen_status_row()
+    return _normalize_canteen_mode(row.get("mode"))
+
+
+def update_canteen_mode(new_mode: Literal["OPEN", "CLOSE", "NORMAL"], updated_by: Optional[str] = None) -> None:
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO canteen_status (id, mode, updated_at, updated_by)
+            VALUES (1, ?, datetime('now','localtime'), ?)
+            ON CONFLICT(id) DO UPDATE SET
+                mode=excluded.mode,
+                updated_at=excluded.updated_at,
+                updated_by=excluded.updated_by
+            """,
+            (new_mode, updated_by),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def canteen_is_open(now: Optional[datetime.datetime] = None) -> bool:
+    now = now or datetime.datetime.now()
+    mode = get_canteen_mode()
+    if mode == "OPEN":
+        return True
+    if mode == "CLOSE":
+        return False
+    return is_within_operational_hours(CANTEEN_OPEN_HOUR, CANTEEN_CLOSE_HOUR, now)
+
+
 def get_canteen_status(now: datetime.datetime) -> dict:
     """
     Determine whether the canteen is open or closed.
     Allows manual override via portal_control file.
     """
-    override = read_override()
-    if override == "open":
-        return {
-            "is_open": True,
-            "reason": "forced_open",
-            "message": "Portal dibuka manual untuk keperluan testing.",
-            "open_time": "08:00",
-            "close_time": "11:00",
-        }
-    if override == "closed":
-        return {
-            "is_open": False,
-            "reason": "forced_closed",
-            "message": "Portal ditutup manual oleh admin.",
-            "open_time": "08:00",
-            "close_time": "11:00",
-        }
-    open_time = datetime.time(8, 0)
-    close_time = datetime.time(11, 0)
-    current_time = now.time()
+    mode = get_canteen_mode()
+    open_time_text = f"{CANTEEN_OPEN_HOUR:02d}:00"
+    close_time_text = f"{CANTEEN_CLOSE_HOUR:02d}:00"
 
     status_payload = {
         "is_open": False,
         "reason": "",
         "message": "",
-        "open_time": "08:00",
-        "close_time": "11:00",
+        "open_time": open_time_text,
+        "close_time": close_time_text,
+        "mode": mode,
     }
 
-    if current_time < open_time:
-        status_payload["is_open"] = False
+    if mode == "OPEN":
+        status_payload.update(
+            {
+                "is_open": True,
+                "reason": "forced_open",
+                "message": "Portal dibuka manual melalui panel admin.",
+            }
+        )
+        return status_payload
+    if mode == "CLOSE":
+        status_payload.update(
+            {
+                "is_open": False,
+                "reason": "forced_closed",
+                "message": "Portal ditutup manual melalui panel admin.",
+            }
+        )
+        return status_payload
+
+    if now.time() < datetime.time(CANTEEN_OPEN_HOUR, 0):
         status_payload["reason"] = "before_open"
         status_payload["message"] = (
-            "Akan dibuka pada pukul 08.00 WIB, "
-            "silakan kembali lagi pada waktu tersebut."
+            f"Akan dibuka pada pukul {open_time_text} WIB, silakan kembali lagi pada waktu tersebut."
         )
-    elif current_time >= close_time:
-        status_payload["is_open"] = False
+    elif now.time() >= datetime.time(CANTEEN_CLOSE_HOUR, 0):
         status_payload["reason"] = "after_close"
         status_payload["message"] = (
             "Silakan pesan makan langsung di kantin (on the spot)."
@@ -180,9 +255,10 @@ def get_canteen_status(now: datetime.datetime) -> dict:
         status_payload["is_open"] = True
         status_payload["reason"] = "open"
         status_payload["message"] = (
-            "Cawang Canteen buka. Jam layanan pemesanan: 08.00–11.00 WIB."
+            f"Cawang Canteen buka. Jam layanan pemesanan: {open_time_text}–{close_time_text} WIB."
         )
 
+    status_payload["is_open"] = canteen_is_open(now)
     return status_payload
 
 
@@ -284,6 +360,7 @@ TapReasonLiteral = Literal[
     "db_busy",
     "ok",
     "duplicate_daily",
+    "canteen_closed",
 ]
 
 
@@ -316,6 +393,11 @@ class TapTransactionResponse(BaseModel):
     server_commit_ts: Optional[int] = Field(default=None, alias="server_commit_ts")
     ticket_number: Optional[str] = None
     transaction: Optional[TapTransactionSummary] = None
+
+
+class CanteenStatusUpdateRequest(BaseModel):
+    mode: Literal["OPEN", "CLOSE", "NORMAL"]
+
 
 
 def _build_tap_response(
@@ -378,6 +460,24 @@ def canteen_status():
     now = datetime.datetime.now()
     status_payload = get_canteen_status(now)
     return JSONResponse(content=status_payload)
+
+
+@router.get("/admin/canteen-status", status_code=status.HTTP_200_OK)
+def admin_get_canteen_status():
+    row = _get_or_create_canteen_status_row()
+    mode = _normalize_canteen_mode(row.get("mode"))
+    return {
+        "mode": mode,
+        "is_open": canteen_is_open(),
+        "updated_at": row.get("updated_at"),
+        "updated_by": row.get("updated_by"),
+    }
+
+
+@router.post("/admin/canteen-status", status_code=status.HTTP_200_OK)
+def admin_update_canteen_status(payload: CanteenStatusUpdateRequest):
+    update_canteen_mode(payload.mode, updated_by=None)
+    return {"mode": payload.mode}
 
 
 @router.get("/tenant/{tenant_id}/quota-state", status_code=status.HTTP_200_OK)
@@ -443,6 +543,10 @@ def tap_transaction(tap_request: TapTransactionRequest):
         return response
 
     _trace_stage("t_server_start")
+
+    if not canteen_is_open():
+        _trace_stage("t_canteen_closed")
+        return _tap_response(status_value="rejected", reason_value="canteen_closed")
 
     _, transaction_date_text, transaction_day = _normalize_timestamp_to_local(
         tap_request.tap_ts, field_name="tap_ts"
@@ -813,8 +917,9 @@ def create_transaction(transaction_data: TransactionCreateRequest):
 
 @router.post("/preorder", status_code=status.HTTP_201_CREATED)
 def create_preorder(preorder: PreorderCreateRequest, background_tasks: BackgroundTasks):
-    canteen_status = get_canteen_status(datetime.datetime.now())
-    if not canteen_status["is_open"]:
+    now_dt = datetime.datetime.now()
+    if not canteen_is_open(now_dt):
+        canteen_status = get_canteen_status(now_dt)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=canteen_status["message"],

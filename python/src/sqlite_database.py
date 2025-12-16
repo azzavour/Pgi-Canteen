@@ -211,6 +211,23 @@ def create_tables(fresh: bool = False):
     """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS canteen_status (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            mode TEXT NOT NULL CHECK (mode IN ('OPEN','CLOSE','NORMAL')),
+            updated_at TEXT NOT NULL,
+            updated_by TEXT
+        )
+        """
+    )
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO canteen_status (id, mode, updated_at)
+        VALUES (1, 'NORMAL', datetime('now','localtime'))
+        """
+    )
+
     conn.commit()
     conn.close()
     print("Database and tables created successfully.")
