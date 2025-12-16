@@ -56,24 +56,27 @@ export function VendorCards({ vendors, mode, onVendorSelect }: VendorCardsProps)
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      {vendors.map((vendor, index) => (
-        <Card
-          key={vendor.deviceCode || `vendor-${index}`}
-          className={cn(
-            "rounded-3xl border-4 border-blue-500 bg-white p-4 shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl sm:p-6",
-            {
-              "cursor-pointer": isPortal,
-              "cursor-default": !isPortal,
+      {vendors.map((vendor, index) => {
+        const slotLetter = getTenantPrefix(vendor.tenantName);
+        return (
+          <Card
+            key={vendor.deviceCode || `vendor-${index}`}
+            className={cn(
+              "rounded-3xl border-4 border-blue-500 bg-white p-4 shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl sm:p-6",
+              {
+                "cursor-pointer": isPortal,
+                "cursor-default": !isPortal,
+              }
+            )}
+            data-slot-letter={slotLetter || undefined}
+            onClick={
+              isPortal
+                ? () => {
+                    handleCardClick(vendor);
+                  }
+                : undefined
             }
-          )}
-          onClick={
-            isPortal
-              ? () => {
-                  handleCardClick(vendor);
-                }
-              : undefined
-          }
-        >
+          >
           <CardHeader className="pb-3">
             {isPortal && (
               <p className="text-xs text-gray-500 mb-1">Klik untuk order</p>
@@ -89,11 +92,6 @@ export function VendorCards({ vendors, mode, onVendorSelect }: VendorCardsProps)
               Available:
               <div className="text-7xl font-black text-slate-800 my-3">
                 <div className="flex items-center justify-center gap-4">
-                  {getTenantPrefix(vendor.tenantName) && (
-                    <span className="text-7xl font-black text-slate-800">
-                      {getTenantPrefix(vendor.tenantName)}
-                    </span>
-                  )}
                   <span>
                     {Number(vendor.quota - vendor.used).toLocaleString("id-ID")}
                   </span>
@@ -135,8 +133,9 @@ export function VendorCards({ vendors, mode, onVendorSelect }: VendorCardsProps)
                 : "Be The First to Order"}
             </p>
           </div>
-        </Card>
-      ))}
+          </Card>
+        );
+      })}
     </div>
   );
 }

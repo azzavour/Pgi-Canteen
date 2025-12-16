@@ -27,6 +27,12 @@ type OverviewResponseItem = {
 };
 
 type MonitorSsePayload = {
+  id?: string | number;
+  tenant_id?: number;
+  tenantId?: number;
+  name?: string;
+  employee_id?: string;
+  employeeId?: string;
   tap_id?: string;
   tapId?: string;
   server_commit_ts?: number;
@@ -41,6 +47,7 @@ declare global {
 }
 
 const REFRESH_INTERVAL_MS = 10_000;
+const SSE_OVERVIEW_DEBOUNCE_MS = 800;
 
 export default function Monitor() {
   const [vendors, setVendors] = useState<VendorCardData[]>([]);
@@ -57,7 +64,7 @@ export default function Monitor() {
     transactionAudioRef.current = audio;
   }, []);
 
-  const logMonitorSound = useCallback((tapId?: string) => {
+  const logMonitorSound = useCallback((tapId?: string): number => {
     const tSoundPlayed = Date.now();
     console.log("[MONITOR] sound played", tSoundPlayed, { tapId });
     const audio = transactionAudioRef.current;
@@ -88,6 +95,66 @@ export default function Monitor() {
         console.error("monitorSoundLogger failed:", err);
       }
     }
+    return tSoundPlayed;
+  }, []);
+
+  const updateVendorsFromSse = useCallback((payload: MonitorSsePayload | null) => {
+    if (!payload) {
+      return;
+    }
+    const rawTenantId =
+      payload.tenantId ?? payload.tenant_id ?? payload.id ?? null;
+    const tenantId =
+      typeof rawTenantId === "string" ? Number(rawTenantId) : rawTenantId;
+    if (!tenantId || Number.isNaN(tenantId)) {
+      return;
+    }
+    const employeeName = payload.name;
+    const employeeId = payload.employeeId ?? payload.employee_id;
+    setVendors((prev) => {
+      if (!prev.length) {
+        return prev;
+      }
+      let didUpdate = false;
+      const nextVendors = prev.map((vendor) => {
+        if (vendor.tenantId !== tenantId) {
+          return vendor;
+        }
+        didUpdate = true;
+        const nextUsed = vendor.used + 1;
+        let nextColor = vendor.color;
+        if (vendor.quota > 0) {
+          if (nextUsed >= vendor.quota) {
+            nextColor = "text-red-500";
+          } else if (nextUsed > (vendor.quota * 2) / 3) {
+            nextColor = "text-yellow-500";
+          } else {
+            nextColor = "text-green-500";
+          }
+        }
+        const nextAvailable =
+          vendor.quota > 0
+            ? Math.max(vendor.quota - nextUsed, 0)
+            : vendor.available;
+        const nextLastOrder: VendorLastOrder = {
+          queueNumber:
+            typeof vendor.lastOrder?.queueNumber === "number"
+              ? vendor.lastOrder.queueNumber + 1
+              : nextUsed,
+          menuLabel: vendor.lastOrder?.menuLabel ?? "",
+          employeeName: employeeName ?? vendor.lastOrder?.employeeName ?? "",
+          employeeId: employeeId ?? vendor.lastOrder?.employeeId ?? "",
+        };
+        return {
+          ...vendor,
+          used: nextUsed,
+          available: nextAvailable,
+          color: nextColor,
+          lastOrder: nextLastOrder,
+        };
+      });
+      return didUpdate ? nextVendors : prev;
+    });
   }, []);
 
   const loadOverview = useCallback(async () => {
@@ -171,23 +238,23 @@ export default function Monitor() {
       const serverCommitTs =
         payloadData?.server_commit_ts ?? payloadData?.serverCommitTs;
       const deltaMs =
-        typeof serverCommitTs === "number"
-          ? tSseReceived - serverCommitTs
-          : null;
+        typeof serverCommitTs === "number" ? tSseReceived - serverCommitTs : null;
+      const tSoundPlayed = logMonitorSound(tapId);
+      updateVendorsFromSse(payloadData);
+      const soundLatency = tSoundPlayed - tSseReceived;
       console.info(
         `[monitor_trace] tapId=${tapId ?? "N/A"} t_sse_received=${tSseReceived}${
           serverCommitTs ? ` server_commit_ts=${serverCommitTs} delta_ms=${deltaMs}` : ""
-        }`
+        } t_sound_played=${tSoundPlayed} sound_latency_ms=${soundLatency}`
       );
       console.log("[MONITOR] SSE received", tSseReceived, { tapId });
-      logMonitorSound(tapId);
 
       if (sseRefreshTimerRef.current) {
         window.clearTimeout(sseRefreshTimerRef.current);
       }
       sseRefreshTimerRef.current = window.setTimeout(() => {
         void loadOverview();
-      }, 400);
+      }, SSE_OVERVIEW_DEBOUNCE_MS);
     };
 
     eventSource.onerror = (err) => {
@@ -202,7 +269,7 @@ export default function Monitor() {
       }
       eventSource.close();
     };
-  }, [loadOverview, logMonitorSound]);
+  }, [loadOverview, logMonitorSound, updateVendorsFromSse]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {

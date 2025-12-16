@@ -16,7 +16,14 @@ load_dotenv()
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 DEBOUNCE_SECONDS = float(os.getenv("DEBOUNCE_SECONDS", 0.2))
 APP_STATE_REFRESH_SECONDS = int(os.getenv("APP_STATE_REFRESH_SECONDS", 300))
-TAP_REQUEST_TIMEOUT_SECONDS = float(os.getenv("TAP_REQUEST_TIMEOUT_SECONDS", 2.0))
+TAP_CONNECT_TIMEOUT_SECONDS = float(os.getenv("TAP_CONNECT_TIMEOUT_SECONDS", 0.75))
+TAP_READ_TIMEOUT_SECONDS = float(os.getenv("TAP_READ_TIMEOUT_SECONDS", 2.0))
+TAP_MAX_RETRIES = int(os.getenv("TAP_MAX_RETRIES", 2))
+TAP_RETRY_BACKOFF_SECONDS = float(os.getenv("TAP_RETRY_BACKOFF_SECONDS", 0.3))
+SSE_STREAM_TIMEOUT_SECONDS = float(os.getenv("SSE_STREAM_TIMEOUT_SECONDS", 90.0))
+
+SESSION = requests.Session()
+SESSION.headers.update({"Connection": "keep-alive"})
 
 # --- Global State for this process ---
 sound_manager = SoundManager(asset_dir="assets")
@@ -103,6 +110,9 @@ def log_buffer(device_id):
         tenant_name = tenant_info.get("name", "Unknown Tenant")
         tap_epoch_ms = int(time.time() * 1000)
         tap_id = f"{input_string}-{tap_epoch_ms}"
+        print(
+            f"[tap_device] tap_id={tap_id} stage=card_read device={device_id} t_card_read={tap_epoch_ms}"
+        )
         tap_payload = {
             "card_number": input_string,
             "tenant_id": tenant_id,
@@ -123,20 +133,48 @@ def log_buffer(device_id):
             else:
                 sound_manager.play_failed(sound_metadata)
 
-        request_start_ms = int(time.time() * 1000)
-        print(
-            f"[tap_device] tap_id={tap_id} stage=request_start device={device_id} ts={request_start_ms}"
-        )
-        response = requests.post(
-            f"{API_BASE_URL}/tap",
-            json=tap_payload,
-            timeout=TAP_REQUEST_TIMEOUT_SECONDS,
-        )
-        request_end_ms = int(time.time() * 1000)
-        rtt_ms = request_end_ms - request_start_ms
-        print(
-            f"[tap_device] tap_id={tap_id} stage=request_end device={device_id} ts={request_end_ms} rtt_ms={rtt_ms:.2f} status_code={response.status_code}"
-        )
+        response = None
+        request_start_ms = 0
+        request_end_ms = 0
+        max_attempts = max(1, TAP_MAX_RETRIES + 1)
+        last_exception = None
+        for attempt in range(1, max_attempts + 1):
+            request_start_ms = int(time.time() * 1000)
+            print(
+                f"[tap_device] tap_id={tap_id} stage=request_start device={device_id} attempt={attempt} t_request_start={request_start_ms}"
+            )
+            try:
+                response = SESSION.post(
+                    f"{API_BASE_URL}/tap",
+                    json=tap_payload,
+                    timeout=(TAP_CONNECT_TIMEOUT_SECONDS, TAP_READ_TIMEOUT_SECONDS),
+                )
+                request_end_ms = int(time.time() * 1000)
+                rtt_ms = request_end_ms - request_start_ms
+                print(
+                    f"[tap_device] tap_id={tap_id} stage=request_end device={device_id} attempt={attempt} t_response_received={request_end_ms} rtt_ms={rtt_ms:.2f} status_code={response.status_code}"
+                )
+                break
+            except requests.exceptions.RequestException as exc:
+                last_exception = exc
+                error_ts = int(time.time() * 1000)
+                print(
+                    f"[tap_device] tap_id={tap_id} stage=request_exception device={device_id} attempt={attempt} ts={error_ts} error={exc}"
+                )
+                if attempt == max_attempts:
+                    raise
+                backoff_seconds = TAP_RETRY_BACKOFF_SECONDS * attempt
+                backoff_ms = int(backoff_seconds * 1000)
+                print(
+                    f"[tap_device] tap_id={tap_id} stage=retry_scheduled device={device_id} next_attempt={attempt + 1} backoff_ms={backoff_ms}"
+                )
+                time.sleep(backoff_seconds)
+
+        if response is None:
+            if last_exception:
+                raise last_exception
+            raise RuntimeError("Tap request failed without response")
+
         response.raise_for_status()
         response_data = response.json()
         server_tap_id = response_data.get("tap_id") or tap_id
@@ -198,7 +236,11 @@ def main():
         url = f"{API_BASE_URL}/sse"
         while True:
             try:
-                with requests.get(url, stream=True, timeout=90) as response:
+                with SESSION.get(
+                    url,
+                    stream=True,
+                    timeout=(TAP_CONNECT_TIMEOUT_SECONDS, SSE_STREAM_TIMEOUT_SECONDS),
+                ) as response:
                     response.raise_for_status()
                     event_lines = []
                     for raw_line in response.iter_lines(decode_unicode=True):

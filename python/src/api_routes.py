@@ -453,11 +453,11 @@ def tap_transaction(tap_request: TapTransactionRequest):
     employee_row = None
     tenant_row = None
 
-    try:
-        _trace_stage("t_before_begin_immediate")
-        cursor.execute("BEGIN IMMEDIATE")
-        _trace_stage("t_after_begin_immediate")
+    def _rollback_if_needed():
+        if conn.in_transaction:
+            conn.rollback()
 
+    try:
         cursor.execute(
             """
             SELECT employee_id,
@@ -477,19 +477,10 @@ def tap_transaction(tap_request: TapTransactionRequest):
             or employee["is_disabled"]
             or employee["is_blocked"]
         ):
-            conn.rollback()
             return _tap_response(
                 status_value="rejected", reason_value="unknown_card"
             )
         employee_row = employee
-
-        if _card_has_transaction_for_day(
-            cursor, employee["card_number"], transaction_day
-        ):
-            conn.rollback()
-            return _tap_response(
-                status_value="rejected", reason_value="duplicate_daily"
-            )
 
         cursor.execute(
             """
@@ -501,12 +492,24 @@ def tap_transaction(tap_request: TapTransactionRequest):
         )
         tenant = cursor.fetchone()
         if not tenant:
-            conn.rollback()
             return _tap_response(
                 status_value="rejected", reason_value="unknown_tenant"
             )
         tenant_row = tenant
         quota_value = tenant["quota"] or 0
+
+        _trace_stage("t_before_begin_immediate")
+        cursor.execute("BEGIN IMMEDIATE")
+        _trace_stage("t_after_begin_immediate")
+
+        if _card_has_transaction_for_day(
+            cursor, employee["card_number"], transaction_day
+        ):
+            _rollback_if_needed()
+            return _tap_response(
+                status_value="rejected", reason_value="duplicate_daily"
+            )
+
         if quota_value > 0:
             cursor.execute(
                 """
@@ -519,7 +522,7 @@ def tap_transaction(tap_request: TapTransactionRequest):
             )
             tenant_orders_today = cursor.fetchone()[0]
             if tenant_orders_today >= quota_value:
-                conn.rollback()
+                _rollback_if_needed()
                 return _tap_response(
                     status_value="rejected", reason_value="quota_exceeded"
                 )
@@ -555,17 +558,17 @@ def tap_transaction(tap_request: TapTransactionRequest):
 
         summary = TapTransactionSummary(
             transaction_id=transaction_id,
-            card_number=employee["card_number"],
-            employee_id=employee["employee_id"],
-            employee_name=employee["name"],
-            employee_group=employee["employee_group"],
-            tenant_id=tenant["id"],
-            tenant_name=tenant["name"],
+            card_number=employee_row["card_number"],
+            employee_id=employee_row["employee_id"],
+            employee_name=employee_row["name"],
+            employee_group=employee_row["employee_group"],
+            tenant_id=tenant_row["id"],
+            tenant_name=tenant_row["name"],
             transaction_date=transaction_date_text,
             transaction_day=transaction_day,
         )
     except sqlite3.IntegrityError as exc:
-        conn.rollback()
+        _rollback_if_needed()
         error_text = str(exc).lower()
         if "unique" in error_text or "transaction_day" in error_text:
             return _tap_response(
@@ -576,7 +579,7 @@ def tap_transaction(tap_request: TapTransactionRequest):
             detail=f"Gagal membuat transaksi TAP: {exc}",
         )
     except sqlite3.OperationalError as exc:
-        conn.rollback()
+        _rollback_if_needed()
         message = str(exc).lower()
         if "database is locked" in message:
             resp = _tap_response(status_value="rejected", reason_value="db_busy")
@@ -589,7 +592,7 @@ def tap_transaction(tap_request: TapTransactionRequest):
             detail=f"Database error saat TAP: {exc}",
         )
     except sqlite3.IntegrityError as exc:
-        conn.rollback()
+        _rollback_if_needed()
         error_text = str(exc).lower()
         if (
             "transaction_day" in error_text
@@ -605,10 +608,10 @@ def tap_transaction(tap_request: TapTransactionRequest):
             detail=f"Gagal membuat pre-order: {exc}",
         )
     except HTTPException:
-        conn.rollback()
+        _rollback_if_needed()
         raise
     except Exception as exc:
-        conn.rollback()
+        _rollback_if_needed()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"TAP endpoint gagal: {exc}",
