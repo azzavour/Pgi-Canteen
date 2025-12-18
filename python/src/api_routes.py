@@ -544,10 +544,6 @@ def tap_transaction(tap_request: TapTransactionRequest):
 
     _trace_stage("t_server_start")
 
-    if not canteen_is_open():
-        _trace_stage("t_canteen_closed")
-        return _tap_response(status_value="rejected", reason_value="canteen_closed")
-
     _, transaction_date_text, transaction_day = _normalize_timestamp_to_local(
         tap_request.tap_ts, field_name="tap_ts"
     )
