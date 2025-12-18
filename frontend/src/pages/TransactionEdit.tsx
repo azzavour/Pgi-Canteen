@@ -100,7 +100,6 @@ export default function TransactionEdit() {
         toast.error("Could not fetch tenants.");
       }
     };
-
     fetchTransaction();
     fetchEmployees();
     fetchTenants();

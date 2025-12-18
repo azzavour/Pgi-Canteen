@@ -61,7 +61,6 @@ export default function Employee() {
         setLoading(false);
       }
     };
-
     fetchData();
   }, []);
 

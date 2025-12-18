@@ -27,7 +27,6 @@ import {
   BreadcrumbList,
   BreadcrumbSeparator,
 } from "../components/ui/breadcrumb";
-
 export default function EmployeeCreate() {
   const navigate = useNavigate();
 

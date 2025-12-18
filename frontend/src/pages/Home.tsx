@@ -161,20 +161,9 @@ export default function Home() {
   const basePath = import.meta.env.BASE_URL || "/";
   const normalizedBasePath = basePath.endsWith("/") ? basePath : `${basePath}/`;
   const monitorUrl = `${normalizedBasePath}monitor`;
-  const dashboardUrl = `${normalizedBasePath}dashboard`;
-  const redirectToMonitor = useCallback(
-    (employeeId?: string | null) => {
-      let target = monitorUrl;
-      if (employeeId) {
-        const separator = monitorUrl.includes("?") ? "&" : "?";
-        target = `${monitorUrl}${separator}employeeId=${encodeURIComponent(
-          employeeId
-        )}`;
-      }
-      window.location.replace(target);
-    },
-    [monitorUrl]
-  );
+  const redirectToMonitor = useCallback(() => {
+    window.location.replace(monitorUrl);
+  }, [monitorUrl]);
 
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
@@ -189,6 +178,18 @@ export default function Home() {
     setIsPreorderOpen(false);
     setIsSubmitting(false);
   }
+
+  const handleAdminButtonClick = useCallback(() => {
+    if (!lastEmployeeIdRef.current) {
+      return;
+    }
+    sessionStorage.setItem("dashboard_allow_emp_id", lastEmployeeIdRef.current);
+    sessionStorage.setItem("dashboard_allow_ts", Date.now().toString());
+    const target = `${normalizedBasePath}dashboard?emp_id=${encodeURIComponent(
+      lastEmployeeIdRef.current
+    )}`;
+    window.location.assign(target);
+  }, [normalizedBasePath]);
 
   const loadDashboard = useCallback(
     async (abortSignal?: AbortSignal) => {
@@ -271,18 +272,17 @@ export default function Home() {
     let isMounted = true;
     async function authenticateFromPortal() {
       const params = new URLSearchParams(window.location.search);
-      const fallbackEmployeeIdParam =
+      const employeeIdParam =
         params.get("emp_id") ??
         params.get("employeeId") ??
         params.get("employeeIdd") ??
         params.get("employee_id");
-      const employeeIdParam = fallbackEmployeeIdParam;
       const portalTokenParam =
         params.get("portal_token") ?? params.get("token");
       lastEmployeeIdRef.current = employeeIdParam ?? null;
 
       if (!employeeIdParam || !portalTokenParam) {
-        redirectToMonitor(employeeIdParam);
+        redirectToMonitor();
         return;
       }
 
@@ -297,7 +297,7 @@ export default function Home() {
         });
 
         if (resp.status === 401 || resp.status === 403) {
-          redirectToMonitor(employeeIdParam);
+          redirectToMonitor();
           return;
         }
         if (!resp.ok) {
@@ -332,12 +332,7 @@ export default function Home() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const effectiveEmployeeId =
-      params.get("emp_id") ||
-      params.get("employeeId") ||
-      params.get("employeeIdd") ||
-      null;
-    console.log("[admin] effectiveEmployeeId=", effectiveEmployeeId);
+    const effectiveEmployeeId = params.get("emp_id");
     if (!effectiveEmployeeId) {
       setIsAdmin(false);
       return;
@@ -355,7 +350,6 @@ export default function Home() {
         }
         const payload: { employeeId: string; isAdmin: boolean } =
           await response.json();
-        console.log("[admin] response=", payload);
         if (!cancelled) {
           setIsAdmin(Boolean(payload?.isAdmin));
         }
@@ -371,6 +365,33 @@ export default function Home() {
       cancelled = true;
     };
   }, [currentUser]);
+
+  const headerElement = (
+    <header className="bg-blue-600 text-white">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6 sm:py-4">
+        <div className="leading-tight">
+          <div className="text-lg font-semibold sm:text-2xl">
+            Cawang Canteen
+          </div>
+        </div>
+        <div className="flex flex-col items-end text-right">
+          <div className="text-base font-semibold sm:text-2xl">{time}</div>
+        </div>
+      </div>
+    </header>
+  );
+
+  const adminButtonSection = isAdmin ? (
+    <div className="mx-auto mt-4 flex w-full max-w-5xl justify-end px-4 sm:px-6">
+      <button
+        type="button"
+        onClick={handleAdminButtonClick}
+        className="inline-flex items-center justify-center rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-blue-700"
+      >
+        Dashboard Admin
+      </button>
+    </div>
+  ) : null;
 
   useEffect(() => {
     let isMounted = true;
@@ -616,24 +637,26 @@ export default function Home() {
 
   if (canteenStatus && !canteenStatus.is_open) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 px-6 canteen-status closed">
-        <div className="max-w-lg rounded-3xl bg-white p-6 text-center shadow-md">
-          <h2 className="text-2xl font-semibold text-gray-800 mb-2">
-            Cawang Canteen Tutup
-          </h2>
-          <p className="text-sm text-gray-700 mb-2">{canteenStatus.message}</p>
-          <p className="text-sm text-gray-600">
-            Jam layanan pemesanan Pre-Order: {canteenStatus.open_time}–
-            {canteenStatus.close_time} WIB
-          </p>
-          <a
-            href={monitorUrl}
-            className="mt-4 inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
-          >
-            Lihat Menu
-          </a>
-          <p className="mt-2 text-xs text-gray-500">
-          </p>
+      <div className="bg-gray-100 min-h-screen">
+        {headerElement}
+        {adminButtonSection}
+        <div className="min-h-[calc(100vh-120px)] flex items-center justify-center px-6 canteen-status closed">
+          <div className="max-w-lg rounded-3xl bg-white p-6 text-center shadow-md">
+            <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+              Cawang Canteen Tutup
+            </h2>
+            <p className="text-sm text-gray-700 mb-2">{canteenStatus.message}</p>
+            <p className="text-sm text-gray-600">
+              Jam layanan pemesanan Pre-Order: {canteenStatus.open_time}–
+              {canteenStatus.close_time} WIB
+            </p>
+            <a
+              href={monitorUrl}
+              className="mt-4 inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+            >
+              Lihat Menu
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -641,26 +664,8 @@ export default function Home() {
 
   return (
     <div className="bg-gray-100 min-h-screen">
-      <header className="bg-blue-600 text-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6 sm:py-4">
-          <div className="leading-tight">
-            <div className="text-lg font-semibold sm:text-2xl">
-              Cawang Canteen
-            </div>
-          </div>
-          <div className="flex flex-col items-end text-right">
-            <div className="text-base font-semibold sm:text-2xl">{time}</div>
-          </div>
-        </div>
-      </header>
-      {isAdmin && (
-        <a
-          href={dashboardUrl}
-          className="fixed top-[110px] right-6 z-50 inline-flex items-center justify-center rounded-full bg-white/90 px-4 py-2 text-sm font-semibold text-blue-700 shadow backdrop-blur transition hover:bg-white"
-        >
-          Dashboard Admin
-        </a>
-      )}
+      {headerElement}
+      {adminButtonSection}
       <main className="bg-gray-100 min-h-screen">
         <div className="mx-auto max-w-5xl px-3 pb-6 pt-4 sm:px-6 sm:pt-6">
           <VendorCards

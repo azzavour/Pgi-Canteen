@@ -71,7 +71,6 @@ export default function Tenant() {
         setLoading(false);
       }
     };
-
     fetchData();
   }, []);
 

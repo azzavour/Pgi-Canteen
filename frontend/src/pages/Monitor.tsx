@@ -53,13 +53,9 @@ export default function Monitor() {
   const [vendors, setVendors] = useState<VendorCardData[]>([]);
   const [time, setTime] = useState(new Date().toLocaleTimeString());
   const [isLoading, setIsLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
   const initialLoadRef = useRef(true);
   const sseRefreshTimerRef = useRef<number | null>(null);
   const transactionAudioRef = useRef<HTMLAudioElement | null>(null);
-  const basePath = import.meta.env.BASE_URL || "/";
-  const normalizedBasePath = basePath.endsWith("/") ? basePath : `${basePath}/`;
-  const dashboardUrl = `${normalizedBasePath}dashboard`;
 
   useEffect(() => {
     const audio = new Audio("/sounds/transaction.mp3");
@@ -282,47 +278,6 @@ export default function Monitor() {
     return () => window.clearInterval(timerId);
   }, []);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const effectiveEmployeeId =
-      params.get("emp_id") ||
-      params.get("employeeId") ||
-      params.get("employeeIdd") ||
-      "";
-    console.log("[admin] effectiveEmployeeId=", effectiveEmployeeId);
-    if (!effectiveEmployeeId) {
-      setIsAdmin(false);
-      return;
-    }
-    let cancelled = false;
-    async function checkAdminStatus(employeeId: string) {
-      try {
-        const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/admin/check?employeeId=${encodeURIComponent(
-            employeeId
-          )}`
-        );
-        if (!response.ok) {
-          throw new Error(`admin-check failed: ${response.status}`);
-        }
-        const payload: { employeeId: string; isAdmin: boolean } = await response.json();
-        console.log("[admin] response=", payload);
-        if (!cancelled) {
-          setIsAdmin(Boolean(payload?.isAdmin));
-        }
-      } catch (error) {
-        console.error("Failed to verify admin access:", error);
-        if (!cancelled) {
-          setIsAdmin(false);
-        }
-      }
-    }
-    void checkAdminStatus(effectiveEmployeeId);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-700">
@@ -340,19 +295,8 @@ export default function Monitor() {
               Cawang Canteen
             </div>
           </div>
-          <div className="flex flex-col items-end gap-2 text-right">
-            <div className="text-base font-semibold sm:text-2xl">{time}</div>
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => {
-                  window.location.href = dashboardUrl;
-                }}
-                className="rounded-full bg-white/10 px-4 py-1 text-xs font-semibold tracking-wide text-white transition hover:bg-white/20"
-              >
-                Dashboard Admin
-              </button>
-            )}
+          <div className="text-right text-base font-semibold sm:text-2xl">
+            {time}
           </div>
         </div>
       </header>

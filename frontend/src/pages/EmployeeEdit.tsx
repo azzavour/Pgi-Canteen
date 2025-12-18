@@ -71,7 +71,6 @@ export default function EmployeeEdit() {
         setLoading(false);
       }
     };
-
     fetchData();
   }, [employeeId]);
 

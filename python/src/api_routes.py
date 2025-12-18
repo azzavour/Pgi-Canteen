@@ -27,6 +27,7 @@ from .portal_auth import verify_portal_token
 from .quota_utils import evaluate_tenant_quota_for_today
 from .tenant_utils import generate_verification_code
 from update_employee_email import update_employee_email
+from .portal_control import read_override
 
 router = APIRouter()
 
@@ -187,6 +188,15 @@ def get_canteen_mode() -> Literal["OPEN", "CLOSE", "NORMAL"]:
     return _normalize_canteen_mode(row.get("mode"))
 
 
+def get_effective_canteen_mode() -> Literal["OPEN", "CLOSE", "NORMAL"]:
+    override = read_override()
+    if override == "open":
+        return "OPEN"
+    if override == "closed":
+        return "CLOSE"
+    return get_canteen_mode()
+
+
 def update_canteen_mode(new_mode: Literal["OPEN", "CLOSE", "NORMAL"], updated_by: Optional[str] = None) -> None:
     conn = get_db_connection()
     try:
@@ -209,7 +219,7 @@ def update_canteen_mode(new_mode: Literal["OPEN", "CLOSE", "NORMAL"], updated_by
 
 def canteen_is_open(now: Optional[datetime.datetime] = None) -> bool:
     now = now or datetime.datetime.now()
-    mode = get_canteen_mode()
+    mode = get_effective_canteen_mode()
     if mode == "OPEN":
         return True
     if mode == "CLOSE":
@@ -222,7 +232,7 @@ def get_canteen_status(now: datetime.datetime) -> dict:
     Determine whether the canteen is open or closed.
     Allows manual override via portal_control file.
     """
-    mode = get_canteen_mode()
+    mode = get_effective_canteen_mode()
     open_time_text = f"{CANTEEN_OPEN_HOUR:02d}:00"
     close_time_text = f"{CANTEEN_CLOSE_HOUR:02d}:00"
 

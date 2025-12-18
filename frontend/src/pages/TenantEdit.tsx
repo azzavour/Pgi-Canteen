@@ -76,7 +76,6 @@ export default function TenantEdit() {
         setLoading(false);
       }
     };
-
     fetchData();
   }, [id]);
 

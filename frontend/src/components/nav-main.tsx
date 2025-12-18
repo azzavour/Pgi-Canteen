@@ -1,3 +1,4 @@
+import * as React from "react";
 import { ChevronRight, GaugeIcon, type LucideIcon } from "lucide-react";
 
 import {
@@ -31,12 +32,36 @@ export function NavMain({
     }[];
   }[];
 }) {
+  const adminEmpId = React.useMemo(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    const params = new URLSearchParams(window.location.search);
+    return (
+      params.get("emp_id") ||
+      sessionStorage.getItem("dashboard_allow_emp_id") ||
+      ""
+    );
+  }, []);
+
+  const buildUrl = React.useCallback(
+    (url: string) => {
+      if (!adminEmpId) {
+        return url;
+      }
+      return url.includes("?")
+        ? `${url}&emp_id=${encodeURIComponent(adminEmpId)}`
+        : `${url}?emp_id=${encodeURIComponent(adminEmpId)}`;
+    },
+    [adminEmpId]
+  );
+
   return (
     <SidebarGroup>
       <SidebarMenu>
         <SidebarMenuItem key="Dashboard">
           <SidebarMenuButton asChild>
-            <Link to="/dashboard">
+            <Link to={buildUrl("/dashboard")}>
               <GaugeIcon />
               Dashboard
             </Link>
@@ -65,7 +90,7 @@ export function NavMain({
                   {item.items?.map((subItem) => (
                     <SidebarMenuSubItem key={subItem.title}>
                       <SidebarMenuSubButton asChild>
-                        <Link to={subItem.url}>
+                        <Link to={buildUrl(subItem.url)}>
                           <span>{subItem.title}</span>
                         </Link>
                       </SidebarMenuSubButton>
