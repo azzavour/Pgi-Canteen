@@ -35,8 +35,8 @@ export default function Page() {
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div className="flex-1">
+          <div className="flex flex-col gap-4">
+            <div>
               <h1 className="text-2xl font-semibold text-slate-900">
                 Dashboard Admin
               </h1>
@@ -44,7 +44,9 @@ export default function Page() {
                 Kelola status operasional kantin melalui panel berikut.
               </p>
             </div>
-            <CanteenControlPanel />
+            <div className="flex w-full justify-center">
+              <CanteenControlPanel />
+            </div>
           </div>
           <div className="grid auto-rows-min gap-4 md:grid-cols-3">
             <div className="bg-muted/50 aspect-video rounded-xl" />

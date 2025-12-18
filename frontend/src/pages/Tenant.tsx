@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { PlusCircle } from "lucide-react";
-import { toast } from "sonner";
 
 import { AppSidebar } from "../components/app-sidebar";
 import {
@@ -42,7 +41,6 @@ export default function Tenant() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [generatingId, setGeneratingId] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -76,36 +74,6 @@ export default function Tenant() {
 
     fetchData();
   }, []);
-
-  const handleGenerateCode = async (tenantId: number) => {
-    setGeneratingId(tenantId);
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/tenant/${tenantId}/generate-code`,
-        {
-          method: "POST",
-        }
-      );
-      if (!response.ok) {
-        throw new Error("Failed to regenerate tenant code.");
-      }
-      const data = await response.json();
-      setTenants((prevTenants) =>
-        prevTenants.map((tenant) =>
-          tenant.id === tenantId
-            ? { ...tenant, verificationCode: data.verificationCode }
-            : tenant
-        )
-      );
-      toast.success("Tenant code updated.");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unexpected error occurred.";
-      toast.error(message);
-    } finally {
-      setGeneratingId(null);
-    }
-  };
 
   if (loading) {
     return <div>Loading...</div>;
@@ -188,16 +156,6 @@ export default function Tenant() {
                     </td>
                     <td className="px-6 py-3 border-b">
                       <div className="flex items-center gap-2">
-                        <Button
-                          onClick={() => handleGenerateCode(tenant.id)}
-                          variant="outline"
-                          size="sm"
-                          disabled={generatingId === tenant.id}
-                        >
-                          {generatingId === tenant.id
-                            ? "Generating..."
-                            : "Generate Code"}
-                        </Button>
                         <Button
                           onClick={() => navigate(`/tenant/edit/${tenant.id}`)}
                           variant="outline"

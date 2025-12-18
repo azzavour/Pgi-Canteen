@@ -120,48 +120,61 @@ export default function Home() {
   } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
-const [preorderError, setPreorderError] = useState<string | null>(null);
-const [isSubmitting, setIsSubmitting] = useState(false);
-const [showTicket, setShowTicket] = useState(false);
-const [orderDateTimeText, setOrderDateTimeText] = useState("");
-const [isTicketQrLoading, setIsTicketQrLoading] = useState(false);
+  const [orderResult, setOrderResult] = useState<OrderResult | null>(null);
+  const [preorderError, setPreorderError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showTicket, setShowTicket] = useState(false);
+  const [orderDateTimeText, setOrderDateTimeText] = useState("");
+  const [isTicketQrLoading, setIsTicketQrLoading] = useState(false);
   const [canteenStatus, setCanteenStatus] = useState<CanteenStatus | null>(null);
-const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
+  const [isStatusLoading, setIsStatusLoading] = useState<boolean>(true);
   const [statusError, setStatusError] = useState<string | null>(null);
-const transactionNumberDisplay =
-  orderResult?.transactionNumber || orderResult?.orderCode || "";
-const ticketDisplayCode =
-  orderResult && transactionNumberDisplay
-    ? orderResult.tenantVerificationCode
-      ? `${orderResult.tenantVerificationCode}-${transactionNumberDisplay}`
-      : transactionNumberDisplay
-    : "";
-const queueCodeDisplay = orderResult?.queueCode || "";
-const whatsappMessage =
-  orderResult && (ticketDisplayCode || orderResult.orderCode)
-    ? (() => {
-        const { dayLine, timeLine } = formatDayTime(
-          orderDateTimeText || orderResult.orderDate
-        );
-        const combinedCode = ticketDisplayCode || orderResult.orderCode;
-        const queueCode = queueCodeDisplay || "-";
-        return (
-          `#${combinedCode}\n\n` +
-          `Halo Bu, saya ${orderResult.employeeName} (${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} dengan detail pesanan :\n\n` +
-          `Hari/tanggal : ${dayLine || "-"}\n` +
-          `Waktu : ${timeLine || "-"}\n` +
-          `Nomor pesanan : ${queueCode}`
-        );
-      })()
-    : "";
+  const [isAdmin, setIsAdmin] = useState(false);
+  const transactionNumberDisplay =
+    orderResult?.transactionNumber || orderResult?.orderCode || "";
+  const ticketDisplayCode =
+    orderResult && transactionNumberDisplay
+      ? orderResult.tenantVerificationCode
+        ? `${orderResult.tenantVerificationCode}-${transactionNumberDisplay}`
+        : transactionNumberDisplay
+      : "";
+  const queueCodeDisplay = orderResult?.queueCode || "";
+  const whatsappMessage =
+    orderResult && (ticketDisplayCode || orderResult.orderCode)
+      ? (() => {
+          const { dayLine, timeLine } = formatDayTime(
+            orderDateTimeText || orderResult.orderDate
+          );
+          const combinedCode = ticketDisplayCode || orderResult.orderCode;
+          const queueCode = queueCodeDisplay || "-";
+          return (
+            `#${combinedCode}\n\n` +
+            `Halo Bu, saya ${orderResult.employeeName} (${orderResult.employeeId}) sudah memesan ${orderResult.menuLabel} di ${orderResult.tenantName} dengan detail pesanan :\n\n` +
+            `Hari/tanggal : ${dayLine || "-"}\n` +
+            `Waktu : ${timeLine || "-"}\n` +
+            `Nomor pesanan : ${queueCode}`
+          );
+        })()
+      : "";
   const sseRefreshTimer = useRef<number | null>(null);
+  const lastEmployeeIdRef = useRef<string | null>(null);
   const basePath = import.meta.env.BASE_URL || "/";
   const normalizedBasePath = basePath.endsWith("/") ? basePath : `${basePath}/`;
   const monitorUrl = `${normalizedBasePath}monitor`;
-  const redirectToMonitor = useCallback(() => {
-    window.location.replace(monitorUrl);
-  }, [monitorUrl]);
+  const dashboardUrl = `${normalizedBasePath}dashboard`;
+  const redirectToMonitor = useCallback(
+    (employeeId?: string | null) => {
+      let target = monitorUrl;
+      if (employeeId) {
+        const separator = monitorUrl.includes("?") ? "&" : "?";
+        target = `${monitorUrl}${separator}employeeId=${encodeURIComponent(
+          employeeId
+        )}`;
+      }
+      window.location.replace(target);
+    },
+    [monitorUrl]
+  );
 
   function handleOpenPreorder(vendor: Vendor) {
     setSelectedVendor(vendor);
@@ -258,13 +271,18 @@ const whatsappMessage =
     let isMounted = true;
     async function authenticateFromPortal() {
       const params = new URLSearchParams(window.location.search);
-      const employeeIdParam =
-        params.get("emp_id") ?? params.get("employee_id");
+      const fallbackEmployeeIdParam =
+        params.get("emp_id") ??
+        params.get("employeeId") ??
+        params.get("employeeIdd") ??
+        params.get("employee_id");
+      const employeeIdParam = fallbackEmployeeIdParam;
       const portalTokenParam =
         params.get("portal_token") ?? params.get("token");
+      lastEmployeeIdRef.current = employeeIdParam ?? null;
 
       if (!employeeIdParam || !portalTokenParam) {
-        redirectToMonitor();
+        redirectToMonitor(employeeIdParam);
         return;
       }
 
@@ -279,7 +297,7 @@ const whatsappMessage =
         });
 
         if (resp.status === 401 || resp.status === 403) {
-          redirectToMonitor();
+          redirectToMonitor(employeeIdParam);
           return;
         }
         if (!resp.ok) {
@@ -311,6 +329,48 @@ const whatsappMessage =
       isMounted = false;
     };
   }, [redirectToMonitor]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const effectiveEmployeeId =
+      params.get("emp_id") ||
+      params.get("employeeId") ||
+      params.get("employeeIdd") ||
+      null;
+    console.log("[admin] effectiveEmployeeId=", effectiveEmployeeId);
+    if (!effectiveEmployeeId) {
+      setIsAdmin(false);
+      return;
+    }
+    let cancelled = false;
+    async function checkAdminStatus(employeeId: string) {
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_API_URL}/admin/check?employeeId=${encodeURIComponent(
+            employeeId
+          )}`
+        );
+        if (!response.ok) {
+          throw new Error(`admin check failed: ${response.status}`);
+        }
+        const payload: { employeeId: string; isAdmin: boolean } =
+          await response.json();
+        console.log("[admin] response=", payload);
+        if (!cancelled) {
+          setIsAdmin(Boolean(payload?.isAdmin));
+        }
+      } catch (error) {
+        console.error("Failed to check admin whitelist:", error);
+        if (!cancelled) {
+          setIsAdmin(false);
+        }
+      }
+    }
+    checkAdminStatus(effectiveEmployeeId);
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     let isMounted = true;
@@ -588,11 +648,19 @@ const whatsappMessage =
               Cawang Canteen
             </div>
           </div>
-          <div className="text-right text-base font-semibold sm:text-2xl">
-            {time}
+          <div className="flex flex-col items-end text-right">
+            <div className="text-base font-semibold sm:text-2xl">{time}</div>
           </div>
         </div>
       </header>
+      {isAdmin && (
+        <a
+          href={dashboardUrl}
+          className="fixed top-[110px] right-6 z-50 inline-flex items-center justify-center rounded-full bg-white/90 px-4 py-2 text-sm font-semibold text-blue-700 shadow backdrop-blur transition hover:bg-white"
+        >
+          Dashboard Admin
+        </a>
+      )}
       <main className="bg-gray-100 min-h-screen">
         <div className="mx-auto max-w-5xl px-3 pb-6 pt-4 sm:px-6 sm:pt-6">
           <VendorCards

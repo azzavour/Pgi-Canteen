@@ -42,6 +42,19 @@ DAILY_TRANSACTION_LIMIT_MESSAGE = (
     "Anda sudah melakukan transaksi hari ini (preorder/tap). Hanya 1 transaksi per hari."
 )
 
+def ensure_dashboard_admins_table(conn: sqlite3.Connection) -> None:
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_admins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id TEXT UNIQUE NOT NULL,
+            name TEXT
+        )
+        """
+    )
+    conn.commit()
+
 
 def _get_local_day_bounds_from_string(date_text: Optional[str] = None) -> tuple[str, str]:
     """
@@ -478,6 +491,28 @@ def admin_get_canteen_status():
 def admin_update_canteen_status(payload: CanteenStatusUpdateRequest):
     update_canteen_mode(payload.mode, updated_by=None)
     return {"mode": payload.mode}
+
+
+@router.get("/admin/check", status_code=status.HTTP_200_OK)
+def admin_check(employee_id: str = Query(..., alias="employeeId")):
+    trimmed_id = employee_id.strip()
+    if not trimmed_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="employeeId wajib diisi.",
+        )
+    conn = get_db_connection()
+    try:
+        ensure_dashboard_admins_table(conn)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM dashboard_admins WHERE employee_id = ? LIMIT 1",
+            (trimmed_id,),
+        )
+        is_admin = cursor.fetchone() is not None
+        return {"employeeId": trimmed_id, "isAdmin": is_admin}
+    finally:
+        conn.close()
 
 
 @router.get("/tenant/{tenant_id}/quota-state", status_code=status.HTTP_200_OK)
