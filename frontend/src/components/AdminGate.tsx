@@ -37,6 +37,8 @@ export function AdminGate({ children }: AdminGateProps) {
       return;
     }
 
+    const employeeId = empId;
+
     const ticketAge = Date.now() - Number(allowTs);
     if (Number.isNaN(ticketAge) || ticketAge > TICKET_TTL_MS) {
       sessionStorage.removeItem("dashboard_allow_emp_id");
@@ -50,7 +52,7 @@ export function AdminGate({ children }: AdminGateProps) {
       try {
         const response = await fetch(
           `${import.meta.env.VITE_API_URL}/admin/check?employeeId=${encodeURIComponent(
-            empId
+            employeeId
           )}`
         );
         if (!response.ok) {
