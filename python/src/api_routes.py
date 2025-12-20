@@ -13,7 +13,16 @@ import time
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Request, HTTPException, status, Query, BackgroundTasks
+from fastapi import (
+    APIRouter,
+    Request,
+    HTTPException,
+    status,
+    Query,
+    BackgroundTasks,
+    Depends,
+    Header,
+)
 from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from openpyxl import Workbook
@@ -55,6 +64,90 @@ def ensure_dashboard_admins_table(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+
+
+def _pick_first_non_empty(*candidates: Optional[str]) -> str:
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        stripped = candidate.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def check_admin_credentials(emp_id: Optional[str], portal_token: Optional[str]) -> dict[str, Any]:
+    trimmed_id = (emp_id or "").strip()
+    token_value = (portal_token or "").strip()
+    if not trimmed_id:
+        return {
+            "ok": False,
+            "reason": "emp_id wajib diisi.",
+            "emp_id": "",
+            "is_admin": False,
+        }
+    if not token_value:
+        return {
+            "ok": False,
+            "reason": "token wajib diisi.",
+            "emp_id": trimmed_id,
+            "is_admin": False,
+        }
+
+    conn = get_db_connection()
+    try:
+        ensure_dashboard_admins_table(conn)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM dashboard_admins WHERE employee_id = ? LIMIT 1",
+            (trimmed_id,),
+        )
+        is_admin = cursor.fetchone() is not None
+
+        verified_user = verify_portal_token(trimmed_id, token_value)
+        token_ok = verified_user is not None
+
+        ok = is_admin and token_ok
+        reason = ""
+        if not is_admin:
+            reason = "emp_id tidak terdaftar sebagai admin."
+        elif not token_ok:
+            reason = "Token tidak cocok atau belum diset."
+
+        return {
+            "ok": ok,
+            "reason": reason if not ok else "",
+            "emp_id": trimmed_id,
+            "is_admin": is_admin,
+        }
+    finally:
+        conn.close()
+
+
+def require_admin_access(
+    emp_id: Optional[str] = Query(None, alias="emp_id"),
+    alt_emp_id: Optional[str] = Query(None, alias="employeeId"),
+    snake_emp_id: Optional[str] = Query(None, alias="employee_id"),
+    portal_token: Optional[str] = Query(None, alias="portal_token"),
+    legacy_token: Optional[str] = Query(None, alias="token"),
+    header_emp_id: Optional[str] = Header(None, alias="X-Admin-Emp-Id"),
+    header_emp_id_alt: Optional[str] = Header(None, alias="X-Employee-Id"),
+    header_token: Optional[str] = Header(None, alias="X-Admin-Portal-Token"),
+    header_token_alt: Optional[str] = Header(None, alias="X-Portal-Token"),
+) -> dict[str, Any]:
+    resolved_emp_id = _pick_first_non_empty(
+        emp_id, alt_emp_id, snake_emp_id, header_emp_id, header_emp_id_alt
+    )
+    resolved_token = _pick_first_non_empty(
+        portal_token, legacy_token, header_token, header_token_alt
+    )
+    result = check_admin_credentials(resolved_emp_id, resolved_token)
+    if not result["ok"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=result["reason"] or "Unauthorized",
+        )
+    return result
 
 
 def _get_local_day_bounds_from_string(date_text: Optional[str] = None) -> tuple[str, str]:
@@ -486,7 +579,7 @@ def canteen_status():
 
 
 @router.get("/admin/canteen-status", status_code=status.HTTP_200_OK)
-def admin_get_canteen_status():
+def admin_get_canteen_status(_: dict[str, Any] = Depends(require_admin_access)):
     row = _get_or_create_canteen_status_row()
     mode = _normalize_canteen_mode(row.get("mode"))
     return {
@@ -498,31 +591,39 @@ def admin_get_canteen_status():
 
 
 @router.post("/admin/canteen-status", status_code=status.HTTP_200_OK)
-def admin_update_canteen_status(payload: CanteenStatusUpdateRequest):
+def admin_update_canteen_status(
+    payload: CanteenStatusUpdateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     update_canteen_mode(payload.mode, updated_by=None)
     return {"mode": payload.mode}
 
 
 @router.get("/admin/check", status_code=status.HTTP_200_OK)
-def admin_check(employee_id: str = Query(..., alias="employeeId")):
-    trimmed_id = employee_id.strip()
-    if not trimmed_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="employeeId wajib diisi.",
-        )
-    conn = get_db_connection()
-    try:
-        ensure_dashboard_admins_table(conn)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT 1 FROM dashboard_admins WHERE employee_id = ? LIMIT 1",
-            (trimmed_id,),
-        )
-        is_admin = cursor.fetchone() is not None
-        return {"employeeId": trimmed_id, "isAdmin": is_admin}
-    finally:
-        conn.close()
+def admin_check(
+    emp_id: Optional[str] = Query(None, alias="emp_id"),
+    alt_emp_id: Optional[str] = Query(None, alias="employeeId"),
+    snake_emp_id: Optional[str] = Query(None, alias="employee_id"),
+    portal_token: Optional[str] = Query(None, alias="portal_token"),
+    legacy_token: Optional[str] = Query(None, alias="token"),
+    header_emp_id: Optional[str] = Header(None, alias="X-Admin-Emp-Id"),
+    header_emp_id_alt: Optional[str] = Header(None, alias="X-Employee-Id"),
+    header_token: Optional[str] = Header(None, alias="X-Admin-Portal-Token"),
+    header_token_alt: Optional[str] = Header(None, alias="X-Portal-Token"),
+):
+    resolved_emp_id = _pick_first_non_empty(
+        emp_id, alt_emp_id, snake_emp_id, header_emp_id, header_emp_id_alt
+    )
+    resolved_token = _pick_first_non_empty(
+        portal_token, legacy_token, header_token, header_token_alt
+    )
+    result = check_admin_credentials(resolved_emp_id, resolved_token)
+    if result["ok"]:
+        return result
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=result,
+    )
 
 
 @router.get("/tenant/{tenant_id}/quota-state", status_code=status.HTTP_200_OK)
@@ -833,7 +934,10 @@ def tap_transaction(tap_request: TapTransactionRequest):
 
 
 @router.post("/transaction", status_code=status.HTTP_201_CREATED)
-def create_transaction(transaction_data: TransactionCreateRequest):
+def create_transaction(
+    transaction_data: TransactionCreateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     start_time = time.perf_counter()
@@ -1297,7 +1401,7 @@ def create_preorder(preorder: PreorderCreateRequest, background_tasks: Backgroun
 # DEPRECATED: Endpoint admin sekali-jalan untuk mengirim token karyawan via email.
 # Flow generate_tokens / broadcast_employee_tokens tidak lagi dipakai oleh autentikasi utama.
 @router.post("/admin/send-employee-tokens", status_code=status.HTTP_410_GONE)
-def send_employee_tokens():
+def send_employee_tokens(_: dict[str, Any] = Depends(require_admin_access)):
     raise HTTPException(
         status_code=status.HTTP_410_GONE,
         detail="DEPRECATED: Token email tidak lagi digunakan dalam alur Cawang Canteen.",
@@ -1364,7 +1468,9 @@ async def get_daily_transaction_count(
 
 
 @router.get("/transaction/{transaction_id}/detail", status_code=status.HTTP_200_OK)
-def get_transaction(transaction_id: int):
+def get_transaction(
+    transaction_id: int, _: dict[str, Any] = Depends(require_admin_access)
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1378,7 +1484,11 @@ def get_transaction(transaction_id: int):
 
 
 @router.put("/transaction/{transaction_id}/update", status_code=status.HTTP_200_OK)
-def update_transaction(transaction_id: int, transaction_data: TransactionUpdateRequest):
+def update_transaction(
+    transaction_id: int,
+    transaction_data: TransactionUpdateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1450,7 +1560,9 @@ def update_transaction(transaction_id: int, transaction_data: TransactionUpdateR
 
 
 @router.delete("/transaction/{transaction_id}/delete", status_code=status.HTTP_200_OK)
-def delete_transaction(transaction_id: int):
+def delete_transaction(
+    transaction_id: int, _: dict[str, Any] = Depends(require_admin_access)
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1530,7 +1642,10 @@ async def check_device_exists(device_code: str):
 
 
 @router.post("/device", status_code=status.HTTP_201_CREATED)
-async def register_new_device(device_data: DeviceCreateRequest):
+async def register_new_device(
+    device_data: DeviceCreateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1575,7 +1690,7 @@ async def sse_endpoint(request: Request):
 
 
 @router.get("/employee")
-async def get_employees():
+async def get_employees(_: dict[str, Any] = Depends(require_admin_access)):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1587,7 +1702,7 @@ async def get_employees():
 
 
 @router.get("/tenant")
-async def get_tenants():
+async def get_tenants(_: dict[str, Any] = Depends(require_admin_access)):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1607,7 +1722,7 @@ async def get_tenants():
 
 
 @router.get("/device")
-async def get_devices():
+async def get_devices(_: dict[str, Any] = Depends(require_admin_access)):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1769,7 +1884,9 @@ def get_dashboard_overview():
 
 
 @router.get("/device/assigned")
-async def get_assigned_devices_with_menu():
+async def get_assigned_devices_with_menu(
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     """
     Returns a list of all devices that have an assigned tenant,
     including the tenant's full details and menu.
@@ -1830,7 +1947,11 @@ async def get_assigned_devices_with_menu():
 
 
 @router.put("/device/{device_code}")
-async def update_device_tenant(device_code: str, update_data: DeviceUpdateRequest):
+async def update_device_tenant(
+    device_code: str,
+    update_data: DeviceUpdateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1855,7 +1976,10 @@ async def update_device_tenant(device_code: str, update_data: DeviceUpdateReques
 
 
 @router.post("/tenant", status_code=status.HTTP_201_CREATED)
-async def create_tenant(create_data: TenantCreateRequest):
+async def create_tenant(
+    create_data: TenantCreateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1890,7 +2014,11 @@ async def create_tenant(create_data: TenantCreateRequest):
 
 
 @router.put("/tenant/{tenant_id}/update")
-async def update_tenant(tenant_id: int, update_data: TenantUpdateRequest):
+async def update_tenant(
+    tenant_id: int,
+    update_data: TenantUpdateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1932,7 +2060,9 @@ async def update_tenant(tenant_id: int, update_data: TenantUpdateRequest):
 
 
 @router.get("/tenant/{tenant_id}/detail")
-async def get_tenant(tenant_id: int):
+async def get_tenant(
+    tenant_id: int, _: dict[str, Any] = Depends(require_admin_access)
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1961,7 +2091,9 @@ async def get_tenant(tenant_id: int):
 
 
 @router.delete("/tenant/{tenant_id}/delete", status_code=status.HTTP_200_OK)
-async def delete_tenant(tenant_id: int):
+async def delete_tenant(
+    tenant_id: int, _: dict[str, Any] = Depends(require_admin_access)
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -1980,7 +2112,10 @@ async def delete_tenant(tenant_id: int):
 
 
 @router.post("/employee", status_code=status.HTTP_201_CREATED)
-async def create_employee(create_data: EmployeeCreateRequest):
+async def create_employee(
+    create_data: EmployeeCreateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -2027,7 +2162,9 @@ async def create_employee(create_data: EmployeeCreateRequest):
 
 
 @router.get("/employee/{employee_id}/detail")
-async def get_employee(employee_id: str):
+async def get_employee(
+    employee_id: str, _: dict[str, Any] = Depends(require_admin_access)
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM employees WHERE employee_id = ?", (employee_id,))
@@ -2042,7 +2179,11 @@ async def get_employee(employee_id: str):
 
 
 @router.put("/employee/{employee_id}/update")
-async def update_employee(employee_id: str, update_data: EmployeeUpdateRequest):
+async def update_employee(
+    employee_id: str,
+    update_data: EmployeeUpdateRequest,
+    _: dict[str, Any] = Depends(require_admin_access),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -2081,7 +2222,9 @@ async def update_employee(employee_id: str, update_data: EmployeeUpdateRequest):
 
 
 @router.delete("/employee/{employee_id}/delete", status_code=status.HTTP_200_OK)
-async def delete_employee(employee_id: str):
+async def delete_employee(
+    employee_id: str, _: dict[str, Any] = Depends(require_admin_access)
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -2132,6 +2275,7 @@ async def get_transaction_reports(
     ),
     page: int = Query(1, ge=1, description="Page number for pagination"),
     page_size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    _auth: dict[str, Any] = Depends(require_admin_access),
 ):
     conn = get_db_connection()
     try:
@@ -2217,6 +2361,7 @@ async def export_transactions_to_excel(
         None,
         description="Filter by employee group (case-insensitive, partial match)",
     ),
+    _auth: dict[str, Any] = Depends(require_admin_access),
 ):
     conn = get_db_connection()
     try:
@@ -2397,6 +2542,7 @@ async def export_transactions_to_excel(
         None,
         description="Filter by employee group (case-insensitive, partial match)",
     ),
+    _auth: dict[str, Any] = Depends(require_admin_access),
 ):
     conn = get_db_connection()
     try:
