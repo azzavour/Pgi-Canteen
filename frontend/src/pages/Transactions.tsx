@@ -33,6 +33,12 @@ import {
   BreadcrumbList,
 } from "../components/ui/breadcrumb";
 import { useNavigate } from "react-router";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 interface Transaction {
   id: number;
@@ -123,10 +129,12 @@ export default function TransactionPage() {
           }
         });
 
+        const credentials = requireAdminCredentials();
         const response = await fetch(
-          `${
-            import.meta.env.VITE_API_URL
-          }/transaction/report?${params.toString()}`
+          appendAdminCredentials(
+            `${API_BASE_URL}/transaction/report?${params.toString()}`,
+            credentials
+          )
         );
         if (!response.ok) {
           throw new Error("Network response was not ok");

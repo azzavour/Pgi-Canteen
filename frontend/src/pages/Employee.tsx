@@ -15,9 +15,14 @@ import {
   SidebarTrigger,
 } from "../components/ui/sidebar";
 import { Separator } from "../components/ui/separator";
-
 import { Button } from "../components/ui/button";
 import type { EmployeeResource } from "..";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 interface Employee {
   employeeId: string;
@@ -35,8 +40,9 @@ export default function Employee() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        const credentials = requireAdminCredentials();
         const response = await fetch(
-          import.meta.env.VITE_API_URL + "/employee"
+          appendAdminCredentials(`${API_BASE_URL}/employee`, credentials),
         );
         if (!response.ok) {
           throw new Error("Network response was not ok");
@@ -49,13 +55,8 @@ export default function Employee() {
           cardNumber: employee.card_number,
         }));
         setEmployees(mappedData);
-      } catch (error) {
-        let message: string;
-        if (error instanceof Error) {
-          message = error.message;
-        } else {
-          message = String(error);
-        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         setError(message);
       } finally {
         setLoading(false);
@@ -64,6 +65,23 @@ export default function Employee() {
     fetchData();
   }, []);
 
+  const deleteEmployee = async (employeeId: string) => {
+    const credentials = requireAdminCredentials();
+    const response = await fetch(
+      appendAdminCredentials(
+        `${API_BASE_URL}/employee/${employeeId}/delete`,
+        credentials,
+      ),
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      throw new Error("Failed to delete employee");
+    }
+    setEmployees((prev) =>
+      prev.filter((employee) => employee.employeeId !== employeeId),
+    );
+  };
+
   if (loading) {
     return <div>Loading...</div>;
   }
@@ -71,6 +89,7 @@ export default function Employee() {
   if (error) {
     return <div>Error: {error}</div>;
   }
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -93,7 +112,7 @@ export default function Employee() {
         </header>
 
         <div className="p-4">
-          <div className="flex items-center justify-between mb-4">
+          <div className="mb-4 flex items-center justify-between">
             <h2 className="text-2xl font-semibold">Employee List</h2>
             <Button
               onClick={() => navigate("/employee/create")}
@@ -129,7 +148,7 @@ export default function Employee() {
               </thead>
               <tbody>
                 {employees.map((employee, index) => (
-                  <tr className="odd:bg-white even:bg-gray-50" key={index}>
+                  <tr className="odd:bg-white even:bg-gray-50" key={employee.employeeId}>
                     <td className="px-6 py-3 border-b">{index + 1}</td>
                     <td className="px-6 py-3 border-b">
                       {employee.cardNumber}
@@ -156,24 +175,20 @@ export default function Employee() {
                           onClick={() => {
                             if (
                               window.confirm(
-                                "Are you sure you want to delete this employee?"
+                                "Are you sure you want to delete this employee?",
                               )
                             ) {
-                              fetch(
-                                `${import.meta.env.VITE_API_URL}/employee/${
-                                  employee.employeeId
-                                }/delete`,
-                                {
-                                  method: "DELETE",
-                                }
-                              ).then(() => {
-                                setEmployees(
-                                  employees.filter(
-                                    (emp) =>
-                                      emp.employeeId !== employee.employeeId
-                                  )
-                                );
-                              });
+                              deleteEmployee(employee.employeeId).catch(
+                                (err) => {
+                                  console.error(
+                                    "Failed to delete employee",
+                                    err,
+                                  );
+                                  window.alert(
+                                    "Failed to delete employee. Please try again.",
+                                  );
+                                },
+                              );
                             }
                           }}
                           variant="outline"

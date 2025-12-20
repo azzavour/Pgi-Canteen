@@ -1,108 +1,101 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 
-const TICKET_TTL_MS = 10 * 60 * 1000;
-// Temporary bypass so dashboard and tenant can be opened without portal auth.
-const MAINTENANCE_BYPASS_PATHS = ["/dashboard", "/tenant"];
+import type { AdminCredentials } from "../lib/adminAuth";
+import {
+  clearAdminCredentials,
+  ensureCredentialsInUrl,
+  extractCredentialsFromSearch,
+  hasCredentialParams,
+  persistAdminCredentials,
+  readAdminCredentialsFromStorage,
+  verifyAdminCredentials,
+} from "../lib/adminAuth";
 
 type AdminGateProps = {
   children: React.ReactNode;
 };
 
+type GateStatus = "checking" | "allowed";
+
 export function AdminGate({ children }: AdminGateProps) {
-  const [status, setStatus] = useState<"checking" | "allowed">("checking");
+  const [status, setStatus] = useState<GateStatus>("checking");
+  const [credentials, setCredentials] = useState<AdminCredentials | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
   const basePath = import.meta.env.BASE_URL || "/";
   const normalizedBasePath = basePath.endsWith("/") ? basePath : `${basePath}/`;
   const monitorUrl = `${normalizedBasePath}monitor`;
-  const portalPath =
-    normalizedBasePath === "/" ? "/" : normalizedBasePath.slice(0, -1);
-  const shouldBypassPortalAuth =
-    typeof window !== "undefined" &&
-    (() => {
-      const pathname = window.location.pathname.replace(/\/+$/, "");
-      return MAINTENANCE_BYPASS_PATHS.some((allowedPath) =>
-        pathname.endsWith(allowedPath)
-      );
-    })();
+  const apiBaseUrl = import.meta.env.VITE_API_URL || "";
+
+  const redirectToMonitor = useCallback(() => {
+    clearAdminCredentials();
+    setCredentials(null);
+    window.location.replace(monitorUrl);
+  }, [monitorUrl]);
 
   useEffect(() => {
-    if (shouldBypassPortalAuth) {
-      setStatus("allowed");
+    const queryCredentials = extractCredentialsFromSearch(location.search);
+    if (queryCredentials) {
+      persistAdminCredentials(queryCredentials);
+      setCredentials(queryCredentials);
       return;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const empId = params.get("emp_id");
-    const portalToken = params.get("portal_token");
-    const allowEmpId = sessionStorage.getItem("dashboard_allow_emp_id");
-    const allowTs = sessionStorage.getItem("dashboard_allow_ts");
-
-    const redirectToPortal = () => {
-      if (empId && portalToken) {
-        const target = `${portalPath}?emp_id=${encodeURIComponent(
-          empId
-        )}&portal_token=${encodeURIComponent(portalToken)}`;
-        window.location.replace(target);
-      } else {
-        window.location.replace(monitorUrl);
-      }
-    };
-
-    if (!empId || !allowEmpId || empId !== allowEmpId || !allowTs) {
-      redirectToPortal();
+    if (hasCredentialParams(location.search)) {
+      redirectToMonitor();
       return;
     }
 
-    const employeeId = empId;
-
-    const ticketAge = Date.now() - Number(allowTs);
-    if (Number.isNaN(ticketAge) || ticketAge > TICKET_TTL_MS) {
-      sessionStorage.removeItem("dashboard_allow_emp_id");
-      sessionStorage.removeItem("dashboard_allow_ts");
-      redirectToPortal();
+    const storedCredentials = readAdminCredentialsFromStorage();
+    if (storedCredentials) {
+      setCredentials(storedCredentials);
+      const targetUrl = ensureCredentialsInUrl(
+        location.pathname,
+        location.search,
+        storedCredentials,
+      );
+      navigate(targetUrl, { replace: true });
       return;
     }
 
+    redirectToMonitor();
+  }, [location.pathname, location.search, navigate, redirectToMonitor]);
+
+  useEffect(() => {
+    if (!credentials) {
+      return;
+    }
     let cancelled = false;
-    async function verifyAdmin() {
+    const activeCredentials = credentials;
+    async function runValidation() {
+      setStatus("checking");
       try {
-        const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/admin/check?employeeId=${encodeURIComponent(
-            employeeId
-          )}`
-        );
-        if (!response.ok) {
-          throw new Error("admin check failed");
+        const result = await verifyAdminCredentials(apiBaseUrl, activeCredentials);
+        if (!result.ok || result.is_admin === false) {
+          throw new Error(result.reason || "Unauthorized");
         }
-        const payload: { isAdmin?: boolean } = await response.json();
-        if (!payload?.isAdmin) {
-          redirectToPortal();
-          return;
-        }
-        sessionStorage.setItem("dashboard_allow_ts", Date.now().toString());
         if (!cancelled) {
+          persistAdminCredentials(activeCredentials);
           setStatus("allowed");
         }
       } catch (error) {
         console.error("[AdminGate] verification failed:", error);
-        redirectToPortal();
+        if (!cancelled) {
+          redirectToMonitor();
+        }
       }
     }
-
-    void verifyAdmin();
-
+    void runValidation();
     return () => {
       cancelled = true;
     };
-  }, [monitorUrl, portalPath, shouldBypassPortalAuth]);
-
-  if (shouldBypassPortalAuth) {
-    return <>{children}</>;
-  }
+  }, [apiBaseUrl, credentials, redirectToMonitor]);
 
   if (status !== "allowed") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-700">
-        Loading...
+        Memverifikasi akses admin...
       </div>
     );
   }

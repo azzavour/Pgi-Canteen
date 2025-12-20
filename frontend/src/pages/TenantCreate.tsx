@@ -27,6 +27,12 @@ import {
   BreadcrumbSeparator,
 } from "../components/ui/breadcrumb";
 import { Textarea } from "../components/ui/textarea";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export default function TenantCreate() {
   const navigate = useNavigate();
@@ -45,11 +51,15 @@ export default function TenantCreate() {
     };
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/tenant`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const credentials = requireAdminCredentials();
+      const response = await fetch(
+        appendAdminCredentials(`${API_BASE_URL}/tenant`, credentials),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
 
       if (!response.ok) {
         throw new Error("Failed to save changes.");

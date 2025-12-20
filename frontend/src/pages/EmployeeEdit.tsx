@@ -28,6 +28,12 @@ import { Label } from "@radix-ui/react-label";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { toast } from "sonner";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export default function EmployeeEdit() {
   const navigate = useNavigate();
@@ -41,8 +47,12 @@ export default function EmployeeEdit() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        const credentials = requireAdminCredentials();
         const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/employee/${employeeId}/detail`
+          appendAdminCredentials(
+            `${API_BASE_URL}/employee/${employeeId}/detail`,
+            credentials
+          )
         );
         if (!response.ok) {
           throw new Error("Network response was not ok");
@@ -82,8 +92,12 @@ export default function EmployeeEdit() {
     };
 
     try {
+      const credentials = requireAdminCredentials();
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/employee/${employeeId}/update`,
+        appendAdminCredentials(
+          `${API_BASE_URL}/employee/${employeeId}/update`,
+          credentials
+        ),
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

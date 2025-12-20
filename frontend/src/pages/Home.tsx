@@ -158,6 +158,7 @@ export default function Home() {
       : "";
   const sseRefreshTimer = useRef<number | null>(null);
   const lastEmployeeIdRef = useRef<string | null>(null);
+  const lastPortalTokenRef = useRef<string | null>(null);
   const basePath = import.meta.env.BASE_URL || "/";
   const normalizedBasePath = basePath.endsWith("/") ? basePath : `${basePath}/`;
   const monitorUrl = `${normalizedBasePath}monitor`;
@@ -180,14 +181,16 @@ export default function Home() {
   }
 
   const handleAdminButtonClick = useCallback(() => {
-    if (!lastEmployeeIdRef.current) {
+    const empId = lastEmployeeIdRef.current;
+    const portalToken = lastPortalTokenRef.current;
+    if (!empId || !portalToken) {
       return;
     }
-    sessionStorage.setItem("dashboard_allow_emp_id", lastEmployeeIdRef.current);
-    sessionStorage.setItem("dashboard_allow_ts", Date.now().toString());
-    const target = `${normalizedBasePath}dashboard?emp_id=${encodeURIComponent(
-      lastEmployeeIdRef.current
-    )}`;
+    const query = new URLSearchParams({
+      emp_id: empId,
+      portal_token: portalToken,
+    });
+    const target = `${normalizedBasePath}dashboard?${query.toString()}`;
     window.location.assign(target);
   }, [normalizedBasePath]);
 
@@ -280,6 +283,7 @@ export default function Home() {
       const portalTokenParam =
         params.get("portal_token") ?? params.get("token");
       lastEmployeeIdRef.current = employeeIdParam ?? null;
+      lastPortalTokenRef.current = portalTokenParam ?? null;
 
       if (!employeeIdParam || !portalTokenParam) {
         redirectToMonitor();
@@ -333,25 +337,32 @@ export default function Home() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const effectiveEmployeeId = params.get("emp_id");
-    if (!effectiveEmployeeId) {
+    const tokenParam =
+      params.get("portal_token") ?? params.get("token");
+    if (!effectiveEmployeeId || !tokenParam) {
       setIsAdmin(false);
       return;
     }
+    lastEmployeeIdRef.current = effectiveEmployeeId;
+    lastPortalTokenRef.current = tokenParam;
     let cancelled = false;
-    async function checkAdminStatus(employeeId: string) {
+    async function checkAdminStatus(employeeId: string, portalToken: string) {
       try {
+        const query = new URLSearchParams({
+          emp_id: employeeId,
+          portal_token: portalToken,
+        });
         const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/admin/check?employeeId=${encodeURIComponent(
-            employeeId
-          )}`
+          `${import.meta.env.VITE_API_URL}/admin/check?${query.toString()}`
         );
-        if (!response.ok) {
-          throw new Error(`admin check failed: ${response.status}`);
-        }
-        const payload: { employeeId: string; isAdmin: boolean } =
-          await response.json();
+        const payload = (await response.json().catch(() => null)) as
+          | { ok?: boolean; is_admin?: boolean }
+          | null;
         if (!cancelled) {
-          setIsAdmin(Boolean(payload?.isAdmin));
+          const authorized = Boolean(
+            response.ok && payload?.ok && payload?.is_admin
+          );
+          setIsAdmin(authorized);
         }
       } catch (error) {
         console.error("Failed to check admin whitelist:", error);
@@ -360,7 +371,7 @@ export default function Home() {
         }
       }
     }
-    checkAdminStatus(effectiveEmployeeId);
+    checkAdminStatus(effectiveEmployeeId, tokenParam);
     return () => {
       cancelled = true;
     };

@@ -27,6 +27,12 @@ import {
   BreadcrumbList,
   BreadcrumbSeparator,
 } from "../components/ui/breadcrumb";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 export default function EmployeeCreate() {
   const navigate = useNavigate();
 
@@ -44,11 +50,15 @@ export default function EmployeeCreate() {
     };
 
     try {
-      const response = await fetch(import.meta.env.VITE_API_URL + "/employee", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const credentials = requireAdminCredentials();
+      const response = await fetch(
+        appendAdminCredentials(`${API_BASE_URL}/employee`, credentials),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
 
       if (!response.ok) {
         throw new Error("Failed to save changes.");

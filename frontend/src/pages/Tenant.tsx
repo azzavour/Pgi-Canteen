@@ -17,6 +17,12 @@ import {
 import { Separator } from "../components/ui/separator";
 
 import { Button } from "../components/ui/button";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 interface Tenant {
   id: number;
@@ -45,7 +51,10 @@ export default function Tenant() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await fetch(import.meta.env.VITE_API_URL + "/tenant");
+        const credentials = requireAdminCredentials();
+        const response = await fetch(
+          appendAdminCredentials(`${API_BASE_URL}/tenant`, credentials)
+        );
         if (!response.ok) {
           throw new Error("Network response was not ok");
         }
@@ -73,6 +82,17 @@ export default function Tenant() {
     };
     fetchData();
   }, []);
+  const deleteTenant = async (tenantId: number) => {
+    const credentials = requireAdminCredentials();
+    const response = await fetch(
+      appendAdminCredentials(`${API_BASE_URL}/tenant/${tenantId}/delete`, credentials),
+      { method: "DELETE" }
+    );
+    if (!response.ok) {
+      throw new Error("Failed to delete tenant");
+    }
+    setTenants((prevTenants) => prevTenants.filter((tenant) => tenant.id !== tenantId));
+  };
 
   if (loading) {
     return <div>Loading...</div>;
@@ -169,17 +189,9 @@ export default function Tenant() {
                                 "Are you sure you want to delete this tenant?"
                               )
                             ) {
-                              fetch(
-                                `${import.meta.env.VITE_API_URL}/tenant/${
-                                  tenant.id
-                                }`,
-                                {
-                                  method: "DELETE",
-                                }
-                              ).then(() => {
-                                setTenants(
-                                  tenants.filter((t) => t.id !== tenant.id)
-                                );
+                              deleteTenant(tenant.id).catch((error) => {
+                                console.error("Failed to delete tenant", error);
+                                window.alert("Failed to delete tenant. Please try again.");
                               });
                             }
                           }}

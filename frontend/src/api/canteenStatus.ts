@@ -1,3 +1,8 @@
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
 export type CanteenMode = "OPEN" | "CLOSE" | "NORMAL";
 
 type CanteenStatusResponse = {
@@ -15,7 +20,7 @@ type UpdateResponse = {
     ok?: boolean;
 };
 
-const BASE_URL = import.meta.env.VITE_API_URL;
+const BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 function resolveMode(raw?: string): CanteenMode {
     if (raw && ["OPEN", "CLOSE", "NORMAL"].includes(raw)) {
@@ -30,7 +35,10 @@ export async function fetchCanteenStatus(): Promise<{
     updatedBy?: string | null;
     isOpen?: boolean | null;
 }> {
-    const response = await fetch(`${BASE_URL}/admin/canteen-status`);
+    const credentials = requireAdminCredentials();
+    const response = await fetch(
+        appendAdminCredentials(`${BASE_URL}/admin/canteen-status`, credentials),
+    );
     if (!response.ok) {
         throw new Error("Failed to fetch canteen status");
     }
@@ -44,13 +52,17 @@ export async function fetchCanteenStatus(): Promise<{
 }
 
 export async function updateCanteenStatus(mode: CanteenMode): Promise<void> {
-    const response = await fetch(`${BASE_URL}/admin/canteen-status`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
+    const credentials = requireAdminCredentials();
+    const response = await fetch(
+        appendAdminCredentials(`${BASE_URL}/admin/canteen-status`, credentials),
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ mode }),
         },
-        body: JSON.stringify({ mode }),
-    });
+    );
     if (!response.ok) {
         throw new Error("Failed to update canteen status");
     }

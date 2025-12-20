@@ -28,6 +28,12 @@ import { Label } from "@radix-ui/react-label";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { toast } from "sonner";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export default function TenantEdit() {
   const navigate = useNavigate();
@@ -43,8 +49,12 @@ export default function TenantEdit() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        const credentials = requireAdminCredentials();
         const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/tenant/${id}/detail`
+          appendAdminCredentials(
+            `${API_BASE_URL}/tenant/${id}/detail`,
+            credentials
+          )
         );
         if (!response.ok) {
           throw new Error("Network response was not ok");
@@ -88,8 +98,12 @@ export default function TenantEdit() {
     };
 
     try {
+      const credentials = requireAdminCredentials();
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/tenant/${id}/update`,
+        appendAdminCredentials(
+          `${API_BASE_URL}/tenant/${id}/update`,
+          credentials
+        ),
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

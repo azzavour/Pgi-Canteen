@@ -24,6 +24,12 @@ import {
 } from "../components/ui/breadcrumb";
 import { toast } from "sonner";
 import { Checkbox } from "../components/ui/checkbox";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 const EMPLOYEE_GROUPS = [
   { id: "PGI", label: "PGI" },
@@ -56,10 +62,12 @@ export default function TransactionExportPage() {
       const params = new URLSearchParams({
         date: date, employee_group: employeeGroup.join(' ')
       });
+      const credentials = requireAdminCredentials();
       const response = await fetch(
-        `${
-          import.meta.env.VITE_API_URL
-        }/transaction/export?${params.toString()}`
+        appendAdminCredentials(
+          `${API_BASE_URL}/transaction/export?${params.toString()}`,
+          credentials
+        )
       );
       if (!response.ok) {
         throw new Error("Network response was not ok");
@@ -90,11 +98,12 @@ export default function TransactionExportPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ date: date, employee_group: employeeGroup.join(' ') });
-      // FIX: The query separator should be '?' not '?/monthly' (assuming '/monthly' is part of the path)
+      const credentials = requireAdminCredentials();
       const response = await fetch(
-        `${
-          import.meta.env.VITE_API_URL
-        }/transaction/export/monthly?${params.toString()}` // Corrected endpoint URL
+        appendAdminCredentials(
+          `${API_BASE_URL}/transaction/export/monthly?${params.toString()}`,
+          credentials
+        )
       );
       if (!response.ok) {
         throw new Error("Network response was not ok");

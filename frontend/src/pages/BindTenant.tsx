@@ -15,6 +15,12 @@ import { Separator } from "../components/ui/separator";
 import { Button } from "../components/ui/button";
 import { Select } from "../components/ui/select";
 import { toast } from "sonner";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 interface Device {
   deviceCode: string;
@@ -51,9 +57,14 @@ export default function BindTenant() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        const credentials = requireAdminCredentials();
         const [devicesResponse, tenantsResponse] = await Promise.all([
-          fetch(import.meta.env.VITE_API_URL + "/device"),
-          fetch(import.meta.env.VITE_API_URL + "/tenant"),
+          fetch(
+            appendAdminCredentials(`${API_BASE_URL}/device`, credentials),
+          ),
+          fetch(
+            appendAdminCredentials(`${API_BASE_URL}/tenant`, credentials),
+          ),
         ]);
 
         if (!devicesResponse.ok || !tenantsResponse.ok) {
@@ -111,8 +122,12 @@ export default function BindTenant() {
 
   const handleSave = async (deviceCode: string, tenantId: number | null) => {
     try {
+      const credentials = requireAdminCredentials();
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/device/${deviceCode}`,
+        appendAdminCredentials(
+          `${API_BASE_URL}/device/${deviceCode}`,
+          credentials,
+        ),
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

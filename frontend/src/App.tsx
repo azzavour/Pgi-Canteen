@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import BindTenant from "./pages/BindTenant";
 import { BrowserRouter, Routes, Route } from "react-router";
 import Dashboard from "./pages/Dashboard";
@@ -17,106 +18,32 @@ import Monitor from "./pages/Monitor";
 import { AdminGate } from "./components/AdminGate";
 
 function App() {
+  const adminRoutes: Array<{ path: string; element: ReactElement }> = [
+    { path: "/dashboard", element: <Dashboard /> },
+    { path: "/employee", element: <Employee /> },
+    { path: "/employee/create", element: <EmployeeCreate /> },
+    { path: "/employee/edit/:employeeId", element: <EmployeeEdit /> },
+    { path: "/tenant", element: <Tenant /> },
+    { path: "/tenant/create", element: <TenantCreate /> },
+    { path: "/tenant/edit/:id", element: <TenantEdit /> },
+    { path: "/transactions", element: <Transactions /> },
+    { path: "/transactions/create", element: <TransactionCreate /> },
+    { path: "/transactions/edit/:id", element: <TransactionEdit /> },
+    { path: "/transactions/export", element: <TransactionExportPage /> },
+    { path: "/bind-tenant", element: <BindTenant /> },
+  ];
+
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route
-          path="/dashboard"
-          element={
-            <AdminGate>
-              <Dashboard />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/employee"
-          element={
-            <AdminGate>
-              <Employee />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/employee/create"
-          element={
-            <AdminGate>
-              <EmployeeCreate />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/employee/edit/:employeeId"
-          element={
-            <AdminGate>
-              <EmployeeEdit />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/tenant"
-          element={
-            <AdminGate>
-              <Tenant />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/tenant/create"
-          element={
-            <AdminGate>
-              <TenantCreate />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/tenant/edit/:id"
-          element={
-            <AdminGate>
-              <TenantEdit />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/transactions"
-          element={
-            <AdminGate>
-              <Transactions />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/transactions/create"
-          element={
-            <AdminGate>
-              <TransactionCreate />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/transactions/edit/:id"
-          element={
-            <AdminGate>
-              <TransactionEdit />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/transactions/export"
-          element={
-            <AdminGate>
-              <TransactionExportPage />
-            </AdminGate>
-          }
-        />
-        <Route
-          path="/bind-tenant"
-          element={
-            <AdminGate>
-              <BindTenant />
-            </AdminGate>
-          }
-        />
+        {adminRoutes.map(({ path, element }) => (
+          <Route
+            key={path}
+            path={path}
+            element={<AdminGate>{element}</AdminGate>}
+          />
+        ))}
         <Route path="/monitor" element={<Monitor />} />
       </Routes>
       <Toaster position="top-center" richColors />

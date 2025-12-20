@@ -17,6 +17,10 @@ import {
   SidebarMenuSubItem,
 } from "../components/ui/sidebar";
 import { Link } from "react-router";
+import {
+  appendAdminCredentials,
+  getActiveAdminCredentials,
+} from "../lib/adminAuth";
 
 export function NavMain({
   items,
@@ -32,28 +36,18 @@ export function NavMain({
     }[];
   }[];
 }) {
-  const adminEmpId = React.useMemo(() => {
+  const adminCredentials = React.useMemo(() => {
     if (typeof window === "undefined") {
-      return "";
+      return null;
     }
-    const params = new URLSearchParams(window.location.search);
-    return (
-      params.get("emp_id") ||
-      sessionStorage.getItem("dashboard_allow_emp_id") ||
-      ""
-    );
+    return getActiveAdminCredentials();
   }, []);
 
   const buildUrl = React.useCallback(
     (url: string) => {
-      if (!adminEmpId) {
-        return url;
-      }
-      return url.includes("?")
-        ? `${url}&emp_id=${encodeURIComponent(adminEmpId)}`
-        : `${url}?emp_id=${encodeURIComponent(adminEmpId)}`;
+      return appendAdminCredentials(url, adminCredentials);
     },
-    [adminEmpId]
+    [adminCredentials]
   );
 
   return (

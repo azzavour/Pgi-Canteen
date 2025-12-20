@@ -28,6 +28,12 @@ import {
 } from "../components/ui/breadcrumb";
 import { Select } from "../components/ui/select";
 import type { Employee, EmployeeResource, Tenant, TenantResource } from "..";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export default function TransactionEdit() {
   const navigate = useNavigate();
@@ -43,8 +49,12 @@ export default function TransactionEdit() {
   useEffect(() => {
     const fetchTransaction = async () => {
       try {
+        const credentials = requireAdminCredentials();
         const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/transaction/${id}/detail`
+          appendAdminCredentials(
+            `${API_BASE_URL}/transaction/${id}/detail`,
+            credentials
+          )
         );
         if (!response.ok) {
           throw new Error("Failed to fetch transaction");
@@ -62,8 +72,9 @@ export default function TransactionEdit() {
 
     const fetchEmployees = async () => {
       try {
+        const credentials = requireAdminCredentials();
         const response = await fetch(
-          import.meta.env.VITE_API_URL + "/employee"
+          appendAdminCredentials(`${API_BASE_URL}/employee`, credentials)
         );
         if (!response.ok) {
           throw new Error("Failed to fetch employees");
@@ -83,7 +94,10 @@ export default function TransactionEdit() {
 
     const fetchTenants = async () => {
       try {
-        const response = await fetch(import.meta.env.VITE_API_URL + "/tenant");
+        const credentials = requireAdminCredentials();
+        const response = await fetch(
+          appendAdminCredentials(`${API_BASE_URL}/tenant`, credentials)
+        );
         if (!response.ok) {
           throw new Error("Failed to fetch tenants");
         }
@@ -113,8 +127,12 @@ export default function TransactionEdit() {
     };
 
     try {
+      const credentials = requireAdminCredentials();
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/transaction/${id}/update`,
+        appendAdminCredentials(
+          `${API_BASE_URL}/transaction/${id}/update`,
+          credentials
+        ),
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

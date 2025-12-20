@@ -28,6 +28,12 @@ import {
 } from "../components/ui/breadcrumb";
 import { Select } from "../components/ui/select";
 import type { Employee, EmployeeResource, Tenant } from "..";
+import {
+  appendAdminCredentials,
+  requireAdminCredentials,
+} from "../lib/adminAuth";
+
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export default function TransactionCreate() {
   const navigate = useNavigate();
@@ -44,8 +50,9 @@ export default function TransactionCreate() {
   useEffect(() => {
     const fetchEmployees = async () => {
       try {
+        const credentials = requireAdminCredentials();
         const response = await fetch(
-          import.meta.env.VITE_API_URL + "/employee"
+          appendAdminCredentials(`${API_BASE_URL}/employee`, credentials)
         );
         if (!response.ok) {
           throw new Error("Failed to fetch employees");
@@ -65,7 +72,10 @@ export default function TransactionCreate() {
 
     const fetchTenants = async () => {
       try {
-        const response = await fetch(import.meta.env.VITE_API_URL + "/tenant");
+        const credentials = requireAdminCredentials();
+        const response = await fetch(
+          appendAdminCredentials(`${API_BASE_URL}/tenant`, credentials)
+        );
         if (!response.ok) {
           throw new Error("Failed to fetch tenants");
         }
@@ -88,8 +98,9 @@ export default function TransactionCreate() {
     };
 
     try {
+      const credentials = requireAdminCredentials();
       const response = await fetch(
-        import.meta.env.VITE_API_URL + "/transaction",
+        appendAdminCredentials(`${API_BASE_URL}/transaction`, credentials),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
