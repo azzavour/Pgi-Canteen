@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 const TICKET_TTL_MS = 10 * 60 * 1000;
+// Temporary bypass so dashboard and tenant can be opened without portal auth.
+const MAINTENANCE_BYPASS_PATHS = ["/dashboard", "/tenant"];
 
 type AdminGateProps = {
   children: React.ReactNode;
@@ -13,8 +15,21 @@ export function AdminGate({ children }: AdminGateProps) {
   const monitorUrl = `${normalizedBasePath}monitor`;
   const portalPath =
     normalizedBasePath === "/" ? "/" : normalizedBasePath.slice(0, -1);
+  const shouldBypassPortalAuth =
+    typeof window !== "undefined" &&
+    (() => {
+      const pathname = window.location.pathname.replace(/\/+$/, "");
+      return MAINTENANCE_BYPASS_PATHS.some((allowedPath) =>
+        pathname.endsWith(allowedPath)
+      );
+    })();
 
   useEffect(() => {
+    if (shouldBypassPortalAuth) {
+      setStatus("allowed");
+      return;
+    }
+
     const params = new URLSearchParams(window.location.search);
     const empId = params.get("emp_id");
     const portalToken = params.get("portal_token");
@@ -78,7 +93,11 @@ export function AdminGate({ children }: AdminGateProps) {
     return () => {
       cancelled = true;
     };
-  }, [monitorUrl, portalPath]);
+  }, [monitorUrl, portalPath, shouldBypassPortalAuth]);
+
+  if (shouldBypassPortalAuth) {
+    return <>{children}</>;
+  }
 
   if (status !== "allowed") {
     return (
